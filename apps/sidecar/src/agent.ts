@@ -349,17 +349,25 @@ function createRelayModel(config: AgentConfig): LanguageModelV1 {
     async doStream(options) {
       // Build the OpenAI-compatible request body
       // Convert Vercel AI SDK tools → OpenAI function-calling format
-      // Note: options.tools is part of the call options but not in the base type definition
       const opts = options as any;
-      console.log('[relay] doStream called, tools:', opts.tools?.length ?? 0, 'mode:', opts.mode);
-      const tools = opts.tools?.map((t: any) => ({
+      console.log('[relay] doStream called');
+      console.log('[relay] options keys:', Object.keys(opts));
+      console.log('[relay] options.tools type:', typeof opts.tools, 'isArray:', Array.isArray(opts.tools));
+      if (Array.isArray(opts.tools)) {
+        console.log('[relay] tools length:', opts.tools.length);
+        console.log('[relay] first tool keys:', Object.keys(opts.tools[0] || {}));
+        console.log('[relay] first tool:', JSON.stringify(opts.tools[0]).slice(0, 200));
+      }
+      // The Vercel AI SDK v4 puts tools as {type: 'function', name, description, parameters}
+      // OpenAI format is {type: 'function', function: {name, description, parameters}}
+      const tools = Array.isArray(opts.tools) ? opts.tools.map((t: any) => ({
         type: 'function',
         function: {
           name: t.name,
           description: t.description,
           parameters: t.parameters,
         },
-      })) ?? [];
+      })) : [];
       console.log('[relay] converted tools:', tools.length);
 
       const requestBody = {
