@@ -68,6 +68,9 @@ export async function createAgent(config: AgentConfig): Promise<AgentRuntime> {
       this.context.prompt = prompt;
       this.context.runId = runId;
 
+      console.log('[agent] run() called, model type:', (this.model as any)?.provider ?? 'unknown', 'tools:', Object.keys(this.tools).length);
+      console.log('[agent] AGENTIC_LLM_RELAY:', process.env.AGENTIC_LLM_RELAY);
+
       this.context.emit({
         type: 'run_started',
         runId,
