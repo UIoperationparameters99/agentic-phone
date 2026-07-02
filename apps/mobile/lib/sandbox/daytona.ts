@@ -151,13 +151,35 @@ export class DaytonaClient {
   }
 
   /**
-   * Get the public preview URL for the sandbox.
+   * Get the public preview URL for a specific port on the sandbox.
+   *
+   * Uses `GET /sandbox/{id}/ports/{port}/signed-preview-url` which returns a
+   * URL with an embedded auth token — no separate auth header needed.
+   *
+   * The URL format is: `https://{port}-{token}.daytonaproxy01.{region}`
+   * (note: port is a PREFIX, not a suffix).
+   *
+   * Mobile connects its WebSocket to this URL's /ws path.
+   */
+  async getSignedPreviewUrl(sandboxId: string, port = 3000): Promise<string> {
+    const res = (await this.request(
+      'GET',
+      `/sandbox/${sandboxId}/ports/${port}/signed-preview-url`,
+    )) as { url: string; token: string; port: number; sandboxId: string };
+    return res.url;
+  }
+
+  /**
+   * Get the public preview URL for the sandbox (port 3000 by default).
    * Mobile connects its WebSocket to this URL.
+   *
+   * @deprecated Use getSignedPreviewUrl() instead — the unsigned URL requires
+   * an Authorization header which the WebView can't easily provide for WS.
    */
   getPreviewUrl(sandbox: DaytonaSandbox): string {
     if (sandbox.previewUrl) return sandbox.previewUrl;
     const target = sandbox.target ?? 'us';
-    return `https://${sandbox.id}-3000.${target}.daytona.io`;
+    return `https://3000-${sandbox.id}.daytonaproxy01.${target}`;
   }
 
   // ─── Internals ──────────────────────────────────────────────────────────

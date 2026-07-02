@@ -107,7 +107,10 @@ export class SessionManager {
     };
 
     const sandbox = await this.daytona.create(opts);
-    const previewUrl = this.daytona.getPreviewUrl(sandbox);
+
+    // Get the signed preview URL for port 3000 (where the sidecar runs).
+    // This URL has an embedded auth token, so the WS connection doesn't need extra headers.
+    const previewUrl = await this.daytona.getSignedPreviewUrl(sandbox.id, 3000);
 
     this.session = {
       id: `sess_${Date.now()}`,
@@ -124,7 +127,7 @@ export class SessionManager {
     // Takes ~15-30s on first run (Bun install), ~5s on subsequent runs (Bun cached).
     await this.bootstrapSidecar(sandbox.id);
 
-    // Wait for the sidecar's /health endpoint to respond.
+    // Wait for the sidecar's /health endpoint to respond via the public preview URL.
     await this.waitForSidecar(previewUrl, 60_000);
     this.setStatus('running');
 
