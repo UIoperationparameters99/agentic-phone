@@ -157,17 +157,21 @@ export class AgentWsClient {
         status = res.status;
         responseText = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
       } else {
-        // Web dev — use fetch
-        const res = await fetch(url, {
+        // Web dev — route through the dev proxy to avoid CORS.
+        // The dev proxy (scripts/dev-proxy.mjs) forwards to any URL.
+        // In production (APK), CapacitorHttp is used instead (no CORS).
+        const proxyUrl = `${process.env.NEXT_PUBLIC_DEV_PROXY ?? 'http://localhost:8787'}/proxy`;
+        const proxyRes = await fetch(proxyUrl, {
           method: 'POST',
           headers: {
+            'X-Target-URL': url,
             'Authorization': `Bearer ${relay.apiKey}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify(requestBody),
         });
-        status = res.status;
-        responseText = await res.text();
+        status = proxyRes.status;
+        responseText = await proxyRes.text();
       }
 
       if (status >= 400) {
