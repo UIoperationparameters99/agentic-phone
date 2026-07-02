@@ -56,3 +56,8 @@ credentials.json
 service-account.json
 *.pem
 *.key
+node_modules/
+apps/mobile/out/
+apps/mobile/.next/
+apps/mobile/android/
+apps/sidecar/dist/

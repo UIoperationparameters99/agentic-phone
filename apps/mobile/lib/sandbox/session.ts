@@ -1,0 +1,126 @@
+/**
+ * Session lifecycle — spawn / connect / pause / resume / destroy.
+ *
+ * Coordinates Daytona REST API (sandbox lifecycle) with the WS client
+ * (event stream from the sidecar running inside the sandbox).
+ */
+
+import { DaytonaClient, type DaytonaSandbox, type CreateSandboxOptions } from './daytona';
+import { envVarsForConfig } from '../byok/providers';
+import type { ByokConfig, SandboxSession, SessionStatus } from '@agentic/shared-types';
+
+/**
+ * Manages a single sandbox session.
+ *
+ * Lifecycle:
+ *   idle → spawning → running ⇄ paused → stopping → stopped
+ *                            └→ failed
+ */
+export class SessionManager {
+  private daytona: DaytonaClient;
+  private session: SandboxSession | null = null;
+  private listeners = new Set<(s: SandboxSession | null) => void>();
+
+  constructor(private byok: ByokConfig) {
+    this.daytona = new DaytonaClient(byok.sandbox.apiKey);
+  }
+
+  /** Subscribe to session state changes. Returns an unsubscribe fn. */
+  subscribe(cb: (s: SandboxSession | null) => void): () => void {
+    this.listeners.add(cb);
+    cb(this.session);
+    return () => this.listeners.delete(cb);
+  }
+
+  private setStatus(status: SessionStatus, patch: Partial<SandboxSession> = {}) {
+    if (!this.session) return;
+    this.session = { ...this.session, status, lastActiveAt: Date.now(), ...patch };
+    this.listeners.forEach((cb) => cb(this.session));
+  }
+
+  /** Spawn a fresh sandbox + wait for the sidecar to be reachable. */
+  async spawn(): Promise<SandboxSession> {
+    if (this.session) throw new Error('Session already exists — call destroy() first.');
+
+    const envVars = envVarsForConfig(this.byok);
+    const opts: CreateSandboxOptions = {
+      envVars,
+      cpu: 2,
+      memory: 2,
+      disk: 5,
+      autoStop: 0, // indefinite — agent may run long
+      public: true, // need a preview URL for WS
+    };
+
+    const sandbox = await this.daytona.create(opts);
+    const previewUrl = this.daytona.getPreviewUrl(sandbox);
+
+    this.session = {
+      id: `sess_${Date.now()}`,
+      sandboxId: sandbox.id,
+      previewUrl,
+      status: 'spawning',
+      createdAt: Date.now(),
+      lastActiveAt: Date.now(),
+    };
+    this.listeners.forEach((cb) => cb(this.session));
+
+    // Wait for the sidecar to come up (it auto-starts on sandbox boot).
+    await this.waitForSidecar(previewUrl, 60_000);
+    this.setStatus('running');
+
+    return this.session;
+  }
+
+  /** Pause the sandbox (snapshot saved, no compute burn). */
+  async pause(): Promise<void> {
+    if (!this.session) return;
+    this.setStatus('stopping');
+    await this.daytona.stop(this.session.sandboxId);
+    this.setStatus('paused');
+  }
+
+  /** Resume a paused sandbox. */
+  async resume(): Promise<void> {
+    if (!this.session) return;
+    this.setStatus('spawning');
+    await this.daytona.start(this.session.sandboxId);
+    await this.waitForSidecar(this.session.previewUrl, 60_000);
+    this.setStatus('running');
+  }
+
+  /** Destroy the sandbox — env vars (incl. LLM keys) are wiped. */
+  async destroy(): Promise<void> {
+    if (!this.session) return;
+    this.setStatus('stopping');
+    try {
+      await this.daytona.delete(this.session.sandboxId);
+    } catch (e) {
+      console.warn('[session] destroy failed:', e);
+    }
+    this.session = null;
+    this.listeners.forEach((cb) => cb(null));
+  }
+
+  /** Get the current session (or null). */
+  current(): SandboxSession | null {
+    return this.session;
+  }
+
+  // ─── Internals ──────────────────────────────────────────────────────────
+
+  private async waitForSidecar(previewUrl: string, timeoutMs: number): Promise<void> {
+    const healthUrl = `${previewUrl}/health`;
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      try {
+        const res = await fetch(healthUrl);
+        if (res.ok) return;
+      } catch {
+        // Sidecar not up yet — retry.
+      }
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+    throw new Error(`Sidecar did not become healthy within ${timeoutMs / 1000}s`);
+  }
+}
