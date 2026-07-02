@@ -170,6 +170,8 @@ export interface ByokConfig {
     provider: LlmProviderId;
     apiKey: string;
     model?: string; // override default
+    /** Base URL override — used by 'custom' provider (LM Studio, Ollama, vLLM, etc.). */
+    baseUrl?: string;
   };
   sandbox: {
     provider: SandboxProviderId;

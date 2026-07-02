@@ -45,14 +45,19 @@ export AGENTIC_WORKSPACE="${AGENTIC_WORKSPACE:-/home/daytona/workspace}"
 mkdir -p "$AGENTIC_WORKSPACE/download" "$AGENTIC_WORKSPACE/upload" "$AGENTIC_WORKSPACE/skills"
 cd "$AGENTIC_WORKSPACE"
 
-# ─── Step 3: Download sidecar bundle ────────────────────────────────────────
+# ─── Step 3: Download sidecar bundle (skip if already present) ────────────
 SIDECAR_URL="${AGENTIC_SIDECAR_URL:-https://raw.githubusercontent.com/UIoperationparameters99/agentic-phone/main/apps/sidecar/dist/sidecar.js}"
 SIDECAR_PATH="$AGENTIC_WORKSPACE/.sidecar/sidecar.js"
 mkdir -p "$(dirname "$SIDECAR_PATH")"
 
-echo "[bootstrap] downloading sidecar from $SIDECAR_URL"
-curl -fsSL "$SIDECAR_URL" -o "$SIDECAR_PATH"
-echo "[bootstrap] saved to $SIDECAR_PATH ($(wc -c < "$SIDECAR_PATH") bytes)"
+# Skip download if the file already exists and is >100KB (from snapshot)
+if [ -f "$SIDECAR_PATH" ] && [ "$(wc -c < "$SIDECAR_PATH")" -gt 100000 ]; then
+  echo "[bootstrap] sidecar.js already present ($(wc -c < "$SIDECAR_PATH") bytes), skipping download"
+else
+  echo "[bootstrap] downloading sidecar from $SIDECAR_URL"
+  curl -fsSL "$SIDECAR_URL" -o "$SIDECAR_PATH"
+  echo "[bootstrap] saved to $SIDECAR_PATH ($(wc -c < "$SIDECAR_PATH") bytes)"
+fi
 
 # ─── Step 4: Start sidecar in background ────────────────────────────────────
 export PORT="${PORT:-3000}"

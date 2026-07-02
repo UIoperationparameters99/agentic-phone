@@ -14,13 +14,22 @@ import { useToast } from '@/components/ui/toaster';
 
 export default function ByokPage() {
   const byok = useStore((s) => s.byok);
+  const byokLoaded = useStore((s) => s.byokLoaded);
+  const loadByok = useStore((s) => s.loadByok);
   const saveByok = useStore((s) => s.saveByok);
   const clearByok = useStore((s) => s.clearByok);
   const { toast } = useToast();
 
+  // Load BYOK config on mount (in case user navigated here directly,
+  // bypassing the chat view which also loads it).
+  React.useEffect(() => {
+    loadByok();
+  }, [loadByok]);
+
   const [llmProvider, setLlmProvider] = React.useState<LlmProviderId>(byok?.llm.provider ?? 'openai');
   const [llmKey, setLlmKey] = React.useState(byok?.llm.apiKey ?? '');
   const [llmModel, setLlmModel] = React.useState(byok?.llm.model ?? '');
+  const [llmBaseUrl, setLlmBaseUrl] = React.useState(byok?.llm.baseUrl ?? '');
   const [sandboxKey, setSandboxKey] = React.useState(byok?.sandbox.apiKey ?? '');
   const [saving, setSaving] = React.useState(false);
 
@@ -30,6 +39,7 @@ export default function ByokPage() {
       setLlmProvider(byok.llm.provider);
       setLlmKey(byok.llm.apiKey);
       setLlmModel(byok.llm.model ?? '');
+      setLlmBaseUrl(byok.llm.baseUrl ?? '');
       setSandboxKey(byok.sandbox.apiKey);
     }
   }, [byok]);
@@ -52,6 +62,7 @@ export default function ByokPage() {
         provider: llmProvider,
         apiKey: llmKey.trim(),
         model: llmModel.trim() || undefined,
+        baseUrl: llmProvider === 'custom' ? llmBaseUrl.trim() : undefined,
       },
       sandbox: {
         provider: 'daytona' as SandboxProviderId,
@@ -82,13 +93,14 @@ export default function ByokPage() {
     setLlmKey('');
     setSandboxKey('');
     setLlmModel('');
+    setLlmBaseUrl('');
     toast({ title: 'Keys removed' });
   };
 
   return (
     <div className="min-h-screen bg-bg">
       {/* Header */}
-      <div className="flex items-center gap-2 px-3 py-3 border-b border-border">
+      <div className="flex items-center gap-2 px-3 py-3 border-b border-border safe-top">
         <Link href="/" className="p-1 text-muted hover:text-fg">
           <ArrowLeft className="h-5 w-5" />
         </Link>
@@ -118,6 +130,7 @@ export default function ByokPage() {
                     onClick={() => {
                       setLlmProvider(p.id);
                       setLlmModel('');
+                      setLlmBaseUrl('');
                     }}
                     className={`px-2 py-2 rounded-md text-xs font-medium border transition-colors ${
                       llmProvider === p.id
@@ -167,6 +180,27 @@ export default function ByokPage() {
               />
               <p className="mt-1 text-[11px] text-muted">Default: <code className="font-mono">{llm.defaultModel}</code></p>
             </div>
+
+            {llmProvider === 'custom' && (
+              <div>
+                <Label htmlFor="llm-base">Base URL</Label>
+                <Input
+                  id="llm-base"
+                  type="url"
+                  inputMode="url"
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  value={llmBaseUrl}
+                  onChange={(e) => setLlmBaseUrl(e.target.value)}
+                  placeholder="http://localhost:1234/v1"
+                  className="mt-1 font-mono text-xs"
+                />
+                <p className="mt-1 text-[11px] text-muted">
+                  OpenAI-compatible endpoint (no trailing slash). e.g. LM Studio, Ollama, vLLM.
+                </p>
+              </div>
+            )}
 
             {llm.freeTierNote && (
               <div className="text-[11px] text-muted bg-surface-2 rounded-md p-2">

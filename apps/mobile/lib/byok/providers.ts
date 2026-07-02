@@ -16,7 +16,12 @@ import { LLM_PROVIDERS } from '@agentic/shared-types';
 
 /** Get the env vars to pass to the sandbox at spawn time. */
 export function envVarsForConfig(config: {
-  llm: { provider: keyof typeof LLM_PROVIDERS; apiKey: string; model?: string };
+  llm: {
+    provider: keyof typeof LLM_PROVIDERS;
+    apiKey: string;
+    model?: string;
+    baseUrl?: string;
+  };
   sandbox: { apiKey: string };
 }): Record<string, string> {
   const llmProvider = LLM_PROVIDERS[config.llm.provider];
@@ -25,7 +30,8 @@ export function envVarsForConfig(config: {
     // Tell the sidecar which provider + model to use.
     AGENTIC_LLM_PROVIDER: llmProvider.id,
     AGENTIC_LLM_MODEL: config.llm.model ?? llmProvider.defaultModel,
-    AGENTIC_LLM_BASE_URL: llmProvider.baseUrl,
+    // User's baseUrl override wins (for 'custom' provider); else fall back to provider default.
+    AGENTIC_LLM_BASE_URL: config.llm.baseUrl?.trim() || llmProvider.baseUrl,
   };
   return env;
 }

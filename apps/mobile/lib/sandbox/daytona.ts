@@ -10,9 +10,10 @@
  * API docs: https://docs.daytona.io/
  */
 
+import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import type { SandboxProviderConfig } from '@agentic/shared-types';
 
-const DAYTONA_API_BASE = 'https://app.daytona.io/api';
+const DAYTONA_API_BASE = process.env.NEXT_PUBLIC_DEV_DAYTONA_BASE ?? 'https://app.daytona.io/api';
 
 export interface DaytonaSandbox {
   id: string;
@@ -31,7 +32,7 @@ export interface DaytonaSandbox {
 }
 
 export interface CreateSandboxOptions {
-  /** Snapshot/image to use. Defaults to 'daytonaio/sandbox:0.8.0'. */
+  /** Snapshot name/id to use. Defaults to the agentic-sidecar-v1 custom snapshot. */
   snapshot?: string;
   /** Env vars to inject (LLM keys, etc.). */
   envVars?: Record<string, string>;
@@ -47,6 +48,19 @@ export interface CreateSandboxOptions {
   public?: boolean;
 }
 
+/**
+ * The custom Daytona snapshot with Bun + the agentic sidecar pre-installed.
+ *
+ * Built by `scripts/build-snapshot.py`. Using this snapshot eliminates the
+ * ~15s Bun install + sidecar download time on each session spawn — the
+ * sandbox boots with the sidecar ready to run.
+ *
+ * To rebuild: `python3 scripts/build-snapshot.py`
+ * To use the default Daytona image instead (requires bootstrap on each spawn):
+ * pass `snapshot: undefined` in CreateSandboxOptions.
+ */
+export const AGENTIC_SNAPSHOT = 'agentic-sidecar-v1';
+
 export class DaytonaClient {
   constructor(private apiKey: string, private baseUrl: string = DAYTONA_API_BASE) {}
 
@@ -55,25 +69,24 @@ export class DaytonaClient {
    *
    * Calls `POST /sandbox` (v1).
    *
-   * Note: when using the default 'daytonaio/sandbox:0.8.0' snapshot,
-   * resource overrides (cpu/memory/disk) are NOT allowed — the snapshot
-   * fixes them. To customize resources, create a custom snapshot first.
+   * By default, uses the custom `agentic-sidecar-v1` snapshot which has
+   * Bun + the sidecar pre-installed (instant spawn, no bootstrap needed).
+   * Pass `snapshot: ''` or `undefined` explicitly to use the default image.
    */
   async create(opts: CreateSandboxOptions = {}): Promise<DaytonaSandbox> {
-    // Build body — only include resource fields if a custom snapshot is provided.
-    const usingCustomSnapshot = !!opts.snapshot;
+    const snapshot = opts.snapshot ?? AGENTIC_SNAPSHOT;
     const body: Record<string, unknown> = {
+      snapshot,
       autoStop: opts.autoStop ?? 0,
       env: opts.envVars ?? {},
       volumes: opts.volumes ?? [],
       public: opts.public ?? true,
     };
-    if (usingCustomSnapshot) {
-      body.snapshot = opts.snapshot;
-      body.cpu = opts.cpu ?? 1;
-      body.memory = opts.memory ?? 1;
-      body.disk = opts.disk ?? 3;
-    }
+    // Resource overrides (only include if explicitly set)
+    if (opts.cpu !== undefined) body.cpu = opts.cpu;
+    if (opts.memory !== undefined) body.memory = opts.memory;
+    if (opts.disk !== undefined) body.disk = opts.disk;
+
     const res = await this.request('POST', '/sandbox', body);
     const sb = res as DaytonaSandbox;
     // Compute preview URL — Daytona exposes preview URLs as https://{sandboxId}-3000.{target}.daytona.io
@@ -197,24 +210,30 @@ export class DaytonaClient {
       'Accept': 'application/json',
     };
 
-    // Use Capacitor HTTP plugin in native, fetch in web dev.
-    if (typeof window !== 'undefined' && (window as any).Capacitor?.isNative) {
-      const { Http } = await import('@capacitor-community/http');
-      const res = await Http.request({
-        method,
-        url,
-        headers,
-        data: body,
-        responseType: 'json',
-        // Capacitor HTTP uses connectTimeout + readTimeout separately.
-        connectTimeout: 10_000,
-        readTimeout: timeoutMs,
-      });
-      if (res.status >= 400) {
-        const msg = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
-        throw new Error(`Daytona ${method} ${path} → ${res.status}: ${msg}`);
+    // Use Capacitor's built-in CapacitorHttp in native (no CORS, key stays out of WebView).
+    // In web dev, use fetch (subject to CORS — use the dev proxy for local testing).
+    if (Capacitor.isNativePlatform()) {
+      try {
+        const res = await CapacitorHttp.request({
+          method,
+          url,
+          headers,
+          data: body,
+          responseType: 'json',
+          // CapacitorHttp uses connectTimeout + readTimeout in ms.
+          connectTimeout: 10_000,
+          readTimeout: timeoutMs,
+        });
+        if (res.status >= 400) {
+          const msg = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
+          throw new Error(`Daytona ${method} ${path} → ${res.status}: ${msg}`);
+        }
+        return res.data;
+      } catch (e: any) {
+        // CapacitorHttp throws on network errors with .message; rethrow with context.
+        if (e.message?.includes('Daytona')) throw e;
+        throw new Error(`Daytona ${method} ${path} → network error: ${e.message ?? e}`);
       }
-      return res.data;
     }
 
     // Web dev — direct fetch with AbortController timeout.

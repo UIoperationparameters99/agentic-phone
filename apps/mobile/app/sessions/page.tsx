@@ -15,8 +15,8 @@ export default function SessionsPage() {
   }, [loadSessions]);
 
   return (
-    <div className="min-h-screen bg-bg flex flex-col">
-      <div className="flex items-center gap-2 px-3 py-3 border-b border-border">
+    <div className="min-h-dvh bg-bg flex flex-col">
+      <div className="flex items-center gap-2 px-3 py-3 border-b border-border safe-top">
         <Link href="/" className="p-1 text-muted hover:text-fg">
           <ArrowLeft className="h-5 w-5" />
         </Link>

@@ -92,14 +92,13 @@ export class SessionManager {
     saveSessions(sessions);
   }
 
-  /** Spawn a fresh sandbox + bootstrap the sidecar + wait for it to be reachable. */
+  /** Spawn a fresh sandbox + bootstrap the sidecar (if needed) + wait for it to be reachable. */
   async spawn(): Promise<SandboxSession> {
     if (this.session) throw new Error('Session already exists — call destroy() first.');
 
     const envVars = envVarsForConfig(this.byok);
-    // NOTE: When using Daytona's default snapshot (daytonaio/sandbox:0.8.0),
-    // resource overrides are not allowed — the snapshot fixes them at 1 vCPU / 1 GB / 3 GB.
-    // To get more resources, create a custom snapshot first.
+    // Use the custom agentic-sidecar-v1 snapshot (Bun + sidecar pre-installed).
+    // This makes spawn nearly instant — no bootstrap needed.
     const opts: CreateSandboxOptions = {
       envVars,
       autoStop: 0, // indefinite — agent may run long
@@ -109,7 +108,6 @@ export class SessionManager {
     const sandbox = await this.daytona.create(opts);
 
     // Get the signed preview URL for port 3000 (where the sidecar runs).
-    // This URL has an embedded auth token, so the WS connection doesn't need extra headers.
     const previewUrl = await this.daytona.getSignedPreviewUrl(sandbox.id, 3000);
 
     this.session = {
@@ -122,13 +120,14 @@ export class SessionManager {
     };
     this.listeners.forEach((cb) => cb(this.session));
 
-    // Bootstrap the sidecar inside the sandbox.
-    // This installs Bun, downloads the sidecar bundle, and starts it in the background.
-    // Takes ~15-30s on first run (Bun install), ~5s on subsequent runs (Bun cached).
+    // Run bootstrap.sh — with the custom snapshot, this is fast (~2s):
+    // Bun is already installed, sidecar.js already downloaded, just starts the process.
+    // Without the snapshot, this does the full install (~15s).
+    // bootstrap.sh itself waits for /health internally (up to 30s).
     await this.bootstrapSidecar(sandbox.id);
 
-    // Wait for the sidecar's /health endpoint to respond via the public preview URL.
-    await this.waitForSidecar(previewUrl, 60_000);
+    // Final health check via the public preview URL (confirms the proxy is routing).
+    await this.waitForSidecar(previewUrl, 30_000);
     this.setStatus('running');
 
     return this.session;

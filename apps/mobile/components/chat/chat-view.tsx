@@ -30,9 +30,9 @@ export function ChatView() {
   }, [messages]);
 
   return (
-    <div className="flex flex-col h-screen bg-bg">
+    <div className="flex flex-col h-dvh overflow-hidden bg-bg">
       {/* Top bar — z.ai style: minimal, chrome wordmark */}
-      <div className="flex items-center gap-2 px-3 py-2.5 border-b border-border bg-bg safe-top">
+      <div className="flex items-center gap-2 px-3 py-2.5 border-b border-border bg-bg safe-top shrink-0">
         <div className="flex items-center gap-2 flex-1">
           {/* z.ai-style icon: dark rounded square with white Z */}
           <div className="w-6 h-6 rounded-md bg-surface-3 flex items-center justify-center">
@@ -60,7 +60,7 @@ export function ChatView() {
       <TodoPanel />
 
       {/* Chat transcript — z.ai canvas: #0D0D0D, full-width assistant blocks */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto bg-bg">
+      <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto overscroll-contain bg-bg">
         {messages.length === 0 ? (
           <EmptyState hasByok={!!byok} byokLoaded={byokLoaded} hasSession={!!session} />
         ) : (
