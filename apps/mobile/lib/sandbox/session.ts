@@ -136,18 +136,19 @@ export class SessionManager {
   /**
    * Bootstrap the sidecar inside a fresh sandbox.
    *
-   * Fetches bootstrap.sh from the GitHub repo and runs it via Daytona's
-   * toolbox execute API. The script:
+   * Fetches bootstrap.sh from the GitHub repo (pinned to a specific commit to
+   * avoid CDN cache issues) and runs it via Daytona's toolbox execute API.
+   * The script:
    *   1. Installs Bun (if not already installed)
-   *   2. Downloads the sidecar bundle (sidecar.js) from GitHub raw
+   *   2. Downloads the sidecar bundle (sidecar.js) from GitHub raw (commit-pinned)
    *   3. Starts it in the background
    *   4. Waits for /health (up to 30s)
-   *
-   * The script's own wait-for-health is a backup — we also poll from the
-   * mobile side via waitForSidecar() below.
    */
   private async bootstrapSidecar(sandboxId: string): Promise<void> {
-    const bootstrapUrl = 'https://raw.githubusercontent.com/UIoperationparameters99/agentic-phone/main/apps/sidecar/bootstrap.sh';
+    // Pin to a specific commit to avoid CDN cache issues with raw.githubusercontent.com.
+    // Update this when pushing new sidecar versions.
+    const COMMIT = '0863328';
+    const bootstrapUrl = `https://raw.githubusercontent.com/UIoperationparameters99/agentic-phone/${COMMIT}/apps/sidecar/bootstrap.sh`;
     // Run bootstrap.sh via curl pipe to bash. Timeout: 90s (Bun install + sidecar start).
     const command = `curl -fsSL '${bootstrapUrl}' | bash`;
     try {
