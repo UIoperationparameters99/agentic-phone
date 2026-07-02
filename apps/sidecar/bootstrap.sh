@@ -46,17 +46,25 @@ mkdir -p "$AGENTIC_WORKSPACE/download" "$AGENTIC_WORKSPACE/upload" "$AGENTIC_WOR
 cd "$AGENTIC_WORKSPACE"
 
 # ─── Step 3: Download sidecar bundle (skip if already present) ────────────
-SIDECAR_URL="${AGENTIC_SIDECAR_URL:-https://raw.githubusercontent.com/UIoperationparameters99/agentic-phone/main/apps/sidecar/dist/sidecar.js}"
+# Pin to a specific commit to avoid CDN cache issues with raw.githubusercontent.com.
+# To update: change AGENTIC_REPO_REF to the latest commit SHA, rebuild the snapshot.
+AGENTIC_REPO_REF="${AGENTIC_REPO_REF:-067a3c0242fdb464916df207b7a3293ecc671e40}"
+SIDECAR_URL="${AGENTIC_SIDECAR_URL:-https://raw.githubusercontent.com/UIoperationparameters99/agentic-phone/$AGENTIC_REPO_REF/apps/sidecar/dist/sidecar.js}"
 SIDECAR_PATH="$AGENTIC_WORKSPACE/.sidecar/sidecar.js"
 mkdir -p "$(dirname "$SIDECAR_PATH")"
 
-# Skip download if the file already exists and is >100KB (from snapshot)
-if [ -f "$SIDECAR_PATH" ] && [ "$(wc -c < "$SIDECAR_PATH")" -gt 100000 ]; then
-  echo "[bootstrap] sidecar.js already present ($(wc -c < "$SIDECAR_PATH") bytes), skipping download"
+# Skip download if the file already exists, is >100KB, AND contains the relay code.
+# (We check for 'llm_request' to ensure we have the relay-capable version.)
+if [ -f "$SIDECAR_PATH" ] && [ "$(wc -c < "$SIDECAR_PATH")" -gt 100000 ] && grep -q 'llm_request' "$SIDECAR_PATH" 2>/dev/null; then
+  echo "[bootstrap] sidecar.js already present ($(wc -c < "$SIDECAR_PATH") bytes, relay-capable), skipping download"
 else
   echo "[bootstrap] downloading sidecar from $SIDECAR_URL"
   curl -fsSL "$SIDECAR_URL" -o "$SIDECAR_PATH"
   echo "[bootstrap] saved to $SIDECAR_PATH ($(wc -c < "$SIDECAR_PATH") bytes)"
+  # Verify the relay code is present
+  if ! grep -q 'llm_request' "$SIDECAR_PATH" 2>/dev/null; then
+    echo "[bootstrap] WARNING: downloaded sidecar.js does not contain relay code — LLM calls may fail"
+  fi
 fi
 
 # ─── Step 4: Start sidecar in background ────────────────────────────────────
