@@ -147,7 +147,7 @@ export class SessionManager {
   private async bootstrapSidecar(sandboxId: string): Promise<void> {
     // Pin to a specific commit to avoid CDN cache issues with raw.githubusercontent.com.
     // Update this when pushing new sidecar versions.
-    const COMMIT = 'bbe5243';
+    const COMMIT = '';
     const bootstrapUrl = `https://raw.githubusercontent.com/UIoperationparameters99/agentic-phone/${COMMIT}/apps/sidecar/bootstrap.sh`;
     // Run bootstrap.sh via curl pipe to bash. Timeout: 90s (Bun install + sidecar start).
     const command = `curl -fsSL '${bootstrapUrl}' | bash`;
