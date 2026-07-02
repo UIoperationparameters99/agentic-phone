@@ -48,7 +48,7 @@ cd "$AGENTIC_WORKSPACE"
 # ─── Step 3: Download sidecar bundle (skip if already present) ────────────
 # Pin to a specific commit to avoid CDN cache issues with raw.githubusercontent.com.
 # To update: change AGENTIC_REPO_REF to the latest commit SHA, rebuild the snapshot.
-AGENTIC_REPO_REF="${AGENTIC_REPO_REF:-067a3c0242fdb464916df207b7a3293ecc671e40}"
+AGENTIC_REPO_REF="${AGENTIC_REPO_REF:-8876e0e}"
 SIDECAR_URL="${AGENTIC_SIDECAR_URL:-https://raw.githubusercontent.com/UIoperationparameters99/agentic-phone/$AGENTIC_REPO_REF/apps/sidecar/dist/sidecar.js}"
 SIDECAR_PATH="$AGENTIC_WORKSPACE/.sidecar/sidecar.js"
 mkdir -p "$(dirname "$SIDECAR_PATH")"
