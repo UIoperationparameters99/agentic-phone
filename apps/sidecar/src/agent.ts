@@ -348,6 +348,7 @@ function createRelayModel(config: AgentConfig): LanguageModelV1 {
       // Convert Vercel AI SDK tools → OpenAI function-calling format
       // Note: options.tools is part of the call options but not in the base type definition
       const opts = options as any;
+      console.log('[relay] doStream called, tools:', opts.tools?.length ?? 0, 'mode:', opts.mode);
       const tools = opts.tools?.map((t: any) => ({
         type: 'function',
         function: {
@@ -356,6 +357,7 @@ function createRelayModel(config: AgentConfig): LanguageModelV1 {
           parameters: t.parameters,
         },
       })) ?? [];
+      console.log('[relay] converted tools:', tools.length);
 
       const requestBody = {
         model: config.model,
