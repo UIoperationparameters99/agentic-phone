@@ -92,7 +92,7 @@ export class SessionManager {
     saveSessions(sessions);
   }
 
-  /** Spawn a fresh sandbox + wait for the sidecar to be reachable. */
+  /** Spawn a fresh sandbox + bootstrap the sidecar + wait for it to be reachable. */
   async spawn(): Promise<SandboxSession> {
     if (this.session) throw new Error('Session already exists — call destroy() first.');
 
@@ -119,11 +119,47 @@ export class SessionManager {
     };
     this.listeners.forEach((cb) => cb(this.session));
 
-    // Wait for the sidecar to come up (it auto-starts on sandbox boot).
+    // Bootstrap the sidecar inside the sandbox.
+    // This installs Bun, downloads the sidecar bundle, and starts it in the background.
+    // Takes ~15-30s on first run (Bun install), ~5s on subsequent runs (Bun cached).
+    await this.bootstrapSidecar(sandbox.id);
+
+    // Wait for the sidecar's /health endpoint to respond.
     await this.waitForSidecar(previewUrl, 60_000);
     this.setStatus('running');
 
     return this.session;
+  }
+
+  /**
+   * Bootstrap the sidecar inside a fresh sandbox.
+   *
+   * Fetches bootstrap.sh from the GitHub repo and runs it via Daytona's
+   * toolbox execute API. The script:
+   *   1. Installs Bun (if not already installed)
+   *   2. Downloads the sidecar bundle (sidecar.js) from GitHub raw
+   *   3. Starts it in the background
+   *   4. Waits for /health (up to 30s)
+   *
+   * The script's own wait-for-health is a backup — we also poll from the
+   * mobile side via waitForSidecar() below.
+   */
+  private async bootstrapSidecar(sandboxId: string): Promise<void> {
+    const bootstrapUrl = 'https://raw.githubusercontent.com/UIoperationparameters99/agentic-phone/main/apps/sidecar/bootstrap.sh';
+    // Run bootstrap.sh via curl pipe to bash. Timeout: 90s (Bun install + sidecar start).
+    const command = `curl -fsSL '${bootstrapUrl}' | bash`;
+    try {
+      const res = await this.daytona.execute(sandboxId, command, '/home/daytona', 90);
+      if (res.exitCode !== 0) {
+        throw new Error(`Bootstrap failed (exit ${res.exitCode}):\n${res.result}`);
+      }
+      console.log('[session] bootstrap output:', res.result);
+    } catch (e) {
+      // If the execute itself times out (90s + 15s grace = 105s HTTP timeout),
+      // the sidecar may still be starting in the background. Let waitForSidecar
+      // make the final call.
+      console.warn('[session] bootstrap execute error (sidecar may still be starting):', e);
+    }
   }
 
   /** Pause the sandbox (snapshot saved, no compute burn). */

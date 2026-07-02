@@ -123,16 +123,22 @@ export class DaytonaClient {
   /**
    * Execute a command in the sandbox (non-interactive).
    * Uses `POST /toolbox/{id}/toolbox/process/execute` (correct path as of July 2026).
+   *
+   * Note: timeout is server-side. The HTTP client timeout should be at least
+   * 10s longer than the command timeout to allow for network latency.
    */
-  async execute(sandboxId: string, command: string, cwd = '/home/daytona'): Promise<{
-    exitCode: number;
-    result: string;
-  }> {
-    return (await this.request('POST', `/toolbox/${sandboxId}/toolbox/process/execute`, {
-      command,
-      cwd,
-      timeout: 60,
-    })) as { exitCode: number; result: string };
+  async execute(
+    sandboxId: string,
+    command: string,
+    cwd = '/home/daytona',
+    timeout = 60,
+  ): Promise<{ exitCode: number; result: string }> {
+    return (await this.request(
+      'POST',
+      `/toolbox/${sandboxId}/toolbox/process/execute`,
+      { command, cwd, timeout },
+      timeout * 1000 + 15_000, // HTTP timeout = command timeout + 15s grace
+    )) as { exitCode: number; result: string };
   }
 
   /**
@@ -156,7 +162,12 @@ export class DaytonaClient {
 
   // ─── Internals ──────────────────────────────────────────────────────────
 
-  private async request(method: string, path: string, body?: unknown): Promise<unknown> {
+  private async request(
+    method: string,
+    path: string,
+    body?: unknown,
+    timeoutMs = 30_000,
+  ): Promise<unknown> {
     const url = `${this.baseUrl}${path}`;
     const headers: Record<string, string> = {
       'Authorization': `Bearer ${this.apiKey}`,
@@ -173,6 +184,9 @@ export class DaytonaClient {
         headers,
         data: body,
         responseType: 'json',
+        // Capacitor HTTP uses connectTimeout + readTimeout separately.
+        connectTimeout: 10_000,
+        readTimeout: timeoutMs,
       });
       if (res.status >= 400) {
         const msg = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
@@ -181,16 +195,23 @@ export class DaytonaClient {
       return res.data;
     }
 
-    // Web dev — direct fetch. Daytona CORS may block this; user can use a CORS proxy.
-    const res = await fetch(url, {
-      method,
-      headers,
-      body: body ? JSON.stringify(body) : undefined,
-    });
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`Daytona ${method} ${path} → ${res.status}: ${text}`);
+    // Web dev — direct fetch with AbortController timeout.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, {
+        method,
+        headers,
+        body: body ? JSON.stringify(body) : undefined,
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`Daytona ${method} ${path} → ${res.status}: ${text}`);
+      }
+      return await res.json();
+    } finally {
+      clearTimeout(timer);
     }
-    return res.json();
   }
 }
