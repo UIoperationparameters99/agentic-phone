@@ -41,6 +41,27 @@ export async function handleCommand(
 
   // Wire the agent's emit() to broadcast.
   ctx.agent.context.emit = (event: any) => broadcastEvent(event);
+  // Also set the global emit for the relay model.
+  (globalThis as any).__agenticEmit = (event: any) => {
+    // Relay events go only to the requesting client, not broadcast.
+    // But for simplicity, broadcast — the mobile app will handle llm_request.
+    const msg: ServerMessage = { type: 'event', event };
+    ws.send(JSON.stringify(msg));
+  };
+
+  // Handle llm_response (mobile app → sidecar)
+  if (msg.type === 'llm_response' as any) {
+    const { requestId, response, error } = msg as any;
+    const handlers = (globalThis as any).__agenticLlmHandlers as Map<string, any> | undefined;
+    if (handlers?.has(requestId)) {
+      const handler = handlers.get(requestId);
+      clearTimeout(handler.timeout);
+      handlers.delete(requestId);
+      if (error) handler.reject(new Error(error));
+      else handler.resolve(response);
+    }
+    return;
+  }
 
   switch (msg.type) {
     case 'hello':

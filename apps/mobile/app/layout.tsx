@@ -1,6 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
-import { Toaster } from '@/components/ui/toaster';
+import { AppProviders } from '@/components/app-providers';
 
 export const metadata: Metadata = {
   title: 'Agentic',
@@ -21,20 +21,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className="dark">
       <body className="bg-bg text-fg min-h-dvh">
-        {children}
-        <Toaster />
-        <StatusBarLoader />
+        <AppProviders>{children}</AppProviders>
       </body>
     </html>
   );
-}
-
-/** Loads Capacitor StatusBar plugin (no-op in web dev). */
-function StatusBarLoader() {
-  if (typeof window !== 'undefined') {
-    import('@capacitor/status-bar')
-      .then(({ StatusBar, Style }) => StatusBar.setStyle({ style: Style.Dark }))
-      .catch(() => {/* not running in Capacitor (web dev) */});
-  }
-  return null;
 }

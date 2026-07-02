@@ -19,6 +19,7 @@ import { reduceEvent, type ToolCallState } from '../agent/event-renderer';
 import { AgentWsClient, type ConnectionStatus } from '../agent/ws-client';
 import { SessionManager } from '../sandbox/session';
 import { secureStorage } from '../byok/storage';
+import { LLM_PROVIDERS } from '@agentic/shared-types';
 
 export interface PendingApproval {
   approvalId: string;
@@ -86,15 +87,20 @@ export const useStore = create<MobileState>((set, get) => ({
 
   async loadByok() {
     const cfg = await secureStorage.load();
-    set({ byok: cfg, byokLoaded: true });
+    if (cfg) {
+      // Create the session manager immediately so spawnSession() works.
+      const sm = new SessionManager(cfg);
+      set({ byok: cfg, byokLoaded: true, sessionManager: sm });
+    } else {
+      set({ byok: null, byokLoaded: true, sessionManager: null });
+    }
   },
 
   async saveByok(config) {
     await secureStorage.save(config);
-    set({ byok: config });
     // Re-create the session manager with the new keys.
     const sm = new SessionManager(config);
-    set({ sessionManager: sm });
+    set({ byok: config, sessionManager: sm, byokLoaded: true });
   },
 
   async clearByok() {
@@ -111,11 +117,17 @@ export const useStore = create<MobileState>((set, get) => ({
     if (!sessionManager || !byok) throw new Error('No BYOK config — call saveByok first.');
     const session = await sessionManager.spawn();
 
-    // Wire up WS client.
+    // Wire up WS client with LLM relay config.
+    // The relay allows the mobile app to proxy LLM calls through its own network,
+    // bypassing sandbox network restrictions (e.g., blocked LLM endpoints).
     const wsClient = new AgentWsClient(`wss://${new URL(session.previewUrl).host}/ws`, {
       onStatusChange: (status) => set({ connStatus: status }),
       onEvent: (event) => handleEvent(event, set, get),
       onMessage: (msg) => handleMessage(msg, set, get),
+      llmRelay: {
+        apiKey: byok.llm.apiKey,
+        baseUrl: byok.llm.baseUrl ?? LLM_PROVIDERS[byok.llm.provider].baseUrl,
+      },
     });
     await wsClient.connect();
 
@@ -133,12 +145,16 @@ export const useStore = create<MobileState>((set, get) => ({
   async resumeSession() {
     const { sessionManager } = get();
     if (sessionManager) await sessionManager.resume();
-    const { session } = get();
+    const { session, byok } = get();
     if (!session) return;
     const wsClient = new AgentWsClient(`wss://${new URL(session.previewUrl).host}/ws`, {
       onStatusChange: (status) => set({ connStatus: status }),
       onEvent: (event) => handleEvent(event, set, get),
       onMessage: (msg) => handleMessage(msg, set, get),
+      llmRelay: byok ? {
+        apiKey: byok.llm.apiKey,
+        baseUrl: byok.llm.baseUrl ?? LLM_PROVIDERS[byok.llm.provider].baseUrl,
+      } : undefined,
     });
     await wsClient.connect();
     set({ wsClient, connStatus: 'connected' });

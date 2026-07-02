@@ -4,10 +4,16 @@
  * Single WS connection carrying the event stream (text deltas, tool calls,
  * todos, etc.) plus command/response (run, cancel, tool approval).
  *
+ * Also handles LLM relay: when the sidecar emits an 'llm_request' event
+ * (because the sandbox can't reach the LLM endpoint), this client intercepts
+ * it, calls the LLM via Capacitor HTTP (native layer, no CORS, can reach
+ * any endpoint), and sends the response back as an 'llm_response' command.
+ *
  * See: packages/shared-types/src/events.ts
  */
 
 import type { ClientMessage, ServerMessage, AgentEvent } from '@agentic/shared-types';
+import { Capacitor, CapacitorHttp } from '@capacitor/core';
 
 export type ConnectionStatus =
   | 'disconnected'
@@ -20,6 +26,11 @@ export interface WsClientHandlers {
   onStatusChange?: (status: ConnectionStatus) => void;
   onEvent?: (event: AgentEvent) => void;
   onMessage?: (msg: ServerMessage) => void;
+  /** LLM relay config — if set, the client intercepts llm_request events. */
+  llmRelay?: {
+    apiKey: string;
+    baseUrl: string;
+  };
 }
 
 export class AgentWsClient {
@@ -55,13 +66,6 @@ export class AgentWsClient {
         this.setStatus('connected');
         // Send hello
         this.send({ type: 'hello', clientId: `client_${Date.now()}`, protocolVersion: 1 });
-        // Start ping
-        this.pingInterval = setInterval(() => {
-          if (this.ws?.readyState === WebSocket.OPEN) {
-            // WebSocket doesn't need application-level ping; the underlying TCP keep-alive handles it.
-            // But we can use this to detect dead connections.
-          }
-        }, 30_000);
         resolve();
       };
 
@@ -70,7 +74,13 @@ export class AgentWsClient {
           const msg = JSON.parse(ev.data as string) as ServerMessage;
           this.handlers.onMessage?.(msg);
           if (msg.type === 'event') {
-            this.handlers.onEvent?.(msg.event);
+            // Check if this is an llm_request event (relay mode)
+            const event = msg.event as any;
+            if (event.type === 'llm_request') {
+              this.handleLlmRequest(event).catch(console.error);
+            } else {
+              this.handlers.onEvent?.(msg.event);
+            }
           }
         } catch (e) {
           console.error('[ws] failed to parse message:', e);
@@ -99,6 +109,91 @@ export class AgentWsClient {
     });
   }
 
+  /**
+   * Handle an llm_request event from the sidecar.
+   * Calls the LLM via Capacitor HTTP (native layer) and sends the response back.
+   */
+  private async handleLlmRequest(event: any): Promise<void> {
+    const { requestId, body, provider, baseUrl } = event;
+    const relay = this.handlers.llmRelay;
+    if (!relay) {
+      // No relay configured — send error back
+      this.send({
+        type: 'llm_response',
+        requestId,
+        error: 'LLM relay not configured on mobile side',
+      } as any);
+      return;
+    }
+
+    try {
+      // Build the OpenAI-compatible chat completion request
+      const url = `${relay.baseUrl.replace(/\/$/, '')}/chat/completions`;
+      const requestBody = {
+        model: body.model,
+        messages: body.messages,
+        temperature: body.temperature,
+        max_tokens: body.maxTokens,
+        stream: false,
+      };
+
+      let responseText: string;
+      let status: number;
+
+      if (Capacitor.isNativePlatform()) {
+        // Use CapacitorHttp (native layer, no CORS, can reach any endpoint)
+        const res = await CapacitorHttp.request({
+          method: 'POST',
+          url,
+          headers: {
+            'Authorization': `Bearer ${relay.apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          data: requestBody,
+          responseType: 'text',
+          connectTimeout: 10_000,
+          readTimeout: 60_000,
+        });
+        status = res.status;
+        responseText = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
+      } else {
+        // Web dev — use fetch
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${relay.apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
+        });
+        status = res.status;
+        responseText = await res.text();
+      }
+
+      if (status >= 400) {
+        this.send({
+          type: 'llm_response',
+          requestId,
+          error: `LLM returned ${status}: ${responseText.slice(0, 500)}`,
+        } as any);
+        return;
+      }
+
+      // Send the response back to the sidecar
+      this.send({
+        type: 'llm_response',
+        requestId,
+        response: responseText,
+      } as any);
+    } catch (e: any) {
+      this.send({
+        type: 'llm_response',
+        requestId,
+        error: e.message ?? String(e),
+      } as any);
+    }
+  }
+
   /** Send a message to the sidecar. */
   send(msg: ClientMessage): void {
     if (this.ws?.readyState === WebSocket.OPEN) {
@@ -109,7 +204,7 @@ export class AgentWsClient {
   }
 
   /** Send a user prompt to start a new run. */
-  run(prompt: string, options?: Parameters<typeof this.send>[0] extends never ? never : {
+  run(prompt: string, options?: {
     model?: string;
     maxTurns?: number;
     requireApproval?: boolean | 'auto';

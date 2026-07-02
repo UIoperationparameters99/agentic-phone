@@ -98,9 +98,9 @@ export default function ByokPage() {
   };
 
   return (
-    <div className="min-h-screen bg-bg">
-      {/* Header */}
-      <div className="flex items-center gap-2 px-3 py-3 border-b border-border safe-top">
+    <div className="flex flex-col h-dvh overflow-hidden bg-bg">
+      {/* Header — fixed at top */}
+      <div className="flex items-center gap-2 px-3 py-3 border-b border-border safe-top shrink-0">
         <Link href="/" className="p-1 text-muted hover:text-fg">
           <ArrowLeft className="h-5 w-5" />
         </Link>
@@ -113,7 +113,9 @@ export default function ByokPage() {
         )}
       </div>
 
-      <div className="p-3 space-y-4 max-w-md mx-auto">
+      {/* Scrollable content area — only this scrolls, not the page */}
+      <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+        <div className="p-3 space-y-4 max-w-md mx-auto pb-8">
         {/* LLM provider */}
         <Card>
           <CardHeader>
@@ -272,6 +274,7 @@ export default function ByokPage() {
         <div className="text-[11px] text-muted text-center pb-4 safe-bottom">
           Keys are stored in Android Keystore (hardware-backed).<br/>
           They're passed to your sandbox as env vars on session start, wiped on session end.
+        </div>
         </div>
       </div>
     </div>

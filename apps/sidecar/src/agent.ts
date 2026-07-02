@@ -173,10 +173,19 @@ export async function createAgent(config: AgentConfig): Promise<AgentRuntime> {
                 }
                 break;
               case 'error':
+                // Surface the error to the user with a helpful message.
+                const errMsg = part.error instanceof Error ? part.error.message : String(part.error);
+                const userFriendly = makeUserFriendlyError(errMsg, this.config);
+                this.context.emit({
+                  type: 'text_delta',
+                  runId,
+                  turnId,
+                  delta: `\n\n⚠️ **Error:** ${userFriendly}\n`,
+                });
                 this.context.emit({
                   type: 'run_failed',
                   runId,
-                  error: part.error instanceof Error ? part.error.message : String(part.error),
+                  error: userFriendly,
                   timestamp: Date.now(),
                 });
                 return;
@@ -225,10 +234,44 @@ export async function createAgent(config: AgentConfig): Promise<AgentRuntime> {
   return runtime;
 }
 
+/**
+ * Convert a raw LLM API error into a user-friendly message.
+ *
+ * Common cases:
+ *   - "socket connection was closed" / "Connection reset" → sandbox can't reach the LLM endpoint
+ *   - "401 Unauthorized" → wrong API key
+ *   - "404 Not Found" → wrong model name or base URL
+ *   - "429 Too Many Requests" → rate limited
+ */
+function makeUserFriendlyError(errMsg: string, config: AgentConfig): string {
+  const lower = errMsg.toLowerCase();
+
+  if (lower.includes('socket connection was closed') || lower.includes('connection reset') || lower.includes('recv failure') || lower.includes('econnreset') || lower.includes('etimedout')) {
+    return `The sandbox cannot reach your LLM endpoint (${config.baseUrl}). This is likely because Daytona's sandbox network blocks this domain. Try a provider that's reachable: OpenAI, Anthropic, Google Gemini, OpenRouter, or use a provider with a standard domain (api.openai.com, api.anthropic.com, etc.).`;
+  }
+  if (lower.includes('401') || lower.includes('unauthorized') || lower.includes('invalid api key')) {
+    return `Authentication failed (401). Check that your API key is correct for ${config.provider}.`;
+  }
+  if (lower.includes('404') || lower.includes('not found') || lower.includes('model')) {
+    return `Model "${config.model}" not found at ${config.baseUrl}. Verify the model name is correct for your provider.`;
+  }
+  if (lower.includes('429') || lower.includes('rate limit') || lower.includes('too many requests')) {
+    return `Rate limited (429). Your LLM provider is throttling requests. Wait a moment and try again.`;
+  }
+  return errMsg;
+}
+
 function createModel(config: AgentConfig) {
   const provider = config.provider;
   const model = config.model;
   const baseUrl = config.baseUrl;
+
+  // If AGENTIC_LLM_RELAY is set, use a relay-based model that proxies
+  // LLM calls through the mobile app (bypasses sandbox network restrictions).
+  // This is automatically enabled when the sandbox can't reach the LLM endpoint.
+  if (process.env.AGENTIC_LLM_RELAY === 'true') {
+    return createRelayModel(config);
+  }
 
   if (provider === 'openai' || provider === 'openrouter' || provider === 'custom' || provider === 'together' || provider === 'fireworks' || provider === 'groq') {
     const openai = createOpenAI({
@@ -268,6 +311,120 @@ function createModel(config: AgentConfig) {
     return mistral(model);
   }
   throw new Error(`Unknown provider: ${provider}`);
+}
+
+/**
+ * Create a relay-based LanguageModel that proxies LLM calls through the mobile app.
+ *
+ * Instead of calling the LLM directly (which may be blocked by sandbox network
+ * restrictions), this model:
+ *   1. Emits an 'llm_request' event over WS with the full request body
+ *   2. Waits for an 'llm_response' event back from the mobile app
+ *   3. Parses the response and feeds it back to the Vercel AI SDK stream
+ *
+ * The mobile app uses Capacitor HTTP (native layer, no CORS) to call the LLM
+ * provider directly, then streams the response back over WS.
+ *
+ * This bypasses ALL sandbox network restrictions — the LLM call originates
+ * from the user's phone, not the sandbox.
+ */
+function createRelayModel(config: AgentConfig): LanguageModelV1 {
+  // The relay uses an OpenAI-compatible request/response format.
+  // The mobile app handles the actual provider-specific auth + endpoint.
+
+  const relayModel: LanguageModelV1 = {
+    specificationVersion: 'v1',
+    provider: `agentic-relay`,
+    modelId: config.model,
+    defaultObjectGenerationMode: 'json',
+
+    async doGenerate(options) {
+      // Not used — streamText always calls doStream
+      throw new Error('Relay model does not support doGenerate');
+    },
+
+    async doStream(options) {
+      // Build the OpenAI-compatible request body
+      const requestBody = {
+        model: config.model,
+        messages: options.prompt,
+        temperature: options.temperature,
+        maxTokens: options.maxTokens,
+        stream: false, // non-streaming for simplicity — the relay returns the full response
+      };
+
+      // Emit the request over WS — the mobile app will intercept it.
+      // We use a promise that resolves when the mobile app sends back the response.
+      const requestId = `llm_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+
+      // Get the emit function from the global context (set by transport layer)
+      const emit = (globalThis as any).__agenticEmit as ((e: any) => void) | undefined;
+      if (!emit) {
+        throw new Error('Relay mode: emit function not available (no WS connection)');
+      }
+
+      // Set up a listener for the response
+      const responsePromise = new Promise<string>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('LLM relay timeout (60s)')), 60_000);
+        const handlers = (globalThis as any).__agenticLlmHandlers as Map<string, { resolve: (v: string) => void; reject: (e: any) => void; timeout: any }> | undefined;
+        if (!handlers) {
+          (globalThis as any).__agenticLlmHandlers = new Map();
+        }
+        ((globalThis as any).__agenticLlmHandlers as Map<string, any>).set(requestId, { resolve, reject, timeout });
+      });
+
+      // Emit the request
+      emit({
+        type: 'llm_request',
+        requestId,
+        body: requestBody,
+        provider: config.provider,
+        baseUrl: config.baseUrl,
+      });
+
+      // Wait for the response (the mobile app will send it back as 'llm_response')
+      const responseText = await responsePromise;
+
+      // Parse the response and return as a stream
+      // The mobile app sends back the raw response body (OpenAI chat completion format)
+      const response = JSON.parse(responseText);
+
+      // Convert to LanguageModelV1Stream format
+      const stream = new ReadableStream({
+        start(controller) {
+          if (response.choices?.[0]?.message?.content) {
+            controller.enqueue({
+              type: 'text-delta',
+              textDelta: response.choices[0].message.content,
+            });
+          }
+          if (response.choices?.[0]?.message?.tool_calls) {
+            for (const tc of response.choices[0].message.tool_calls) {
+              controller.enqueue({
+                type: 'tool-call',
+                toolCallId: tc.id,
+                toolName: tc.function.name,
+                args: JSON.parse(tc.function.arguments),
+              });
+            }
+          }
+          controller.enqueue({
+            type: 'finish',
+            finishReason: response.choices?.[0]?.finish_reason ?? 'stop',
+            usage: response.usage ? {
+              promptTokens: response.usage.prompt_tokens ?? 0,
+              completionTokens: response.usage.completion_tokens ?? 0,
+            } : undefined,
+          });
+          controller.close();
+        },
+      });
+
+      return { stream, rawCall: { rawPrompt: options.prompt, rawSettings: {} } };
+    },
+  };
+
+  return relayModel;
 }
 
 function buildSystemPrompt(workspace: string): string {

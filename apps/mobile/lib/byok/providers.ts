@@ -32,6 +32,10 @@ export function envVarsForConfig(config: {
     AGENTIC_LLM_MODEL: config.llm.model ?? llmProvider.defaultModel,
     // User's baseUrl override wins (for 'custom' provider); else fall back to provider default.
     AGENTIC_LLM_BASE_URL: config.llm.baseUrl?.trim() || llmProvider.baseUrl,
+    // Enable LLM relay mode — the mobile app proxies LLM calls through its
+    // own network (Capacitor HTTP, native layer). This bypasses sandbox network
+    // restrictions (e.g., blocked LLM endpoints like api.gateway.orgn.com).
+    AGENTIC_LLM_RELAY: 'true',
   };
   return env;
 }

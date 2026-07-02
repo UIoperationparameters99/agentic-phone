@@ -17,9 +17,16 @@ export function ChatView() {
   const session = useStore((s) => s.session);
   const scrollRef = React.useRef<HTMLDivElement>(null);
 
-  // Load BYOK config on first mount.
+  // Load BYOK config on first mount. Timeout after 5s so we don't get stuck.
   React.useEffect(() => {
+    const timeout = setTimeout(() => {
+      if (!useStore.getState().byokLoaded) {
+        console.warn('[chat] loadByok timed out after 5s, forcing byokLoaded=true');
+        useStore.setState({ byokLoaded: true });
+      }
+    }, 5000);
     loadByok();
+    return () => clearTimeout(timeout);
   }, [loadByok]);
 
   // Auto-scroll to bottom when messages change.
