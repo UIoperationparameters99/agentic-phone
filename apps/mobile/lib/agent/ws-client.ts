@@ -129,13 +129,18 @@ export class AgentWsClient {
     try {
       // Build the OpenAI-compatible chat completion request
       const url = `${relay.baseUrl.replace(/\/$/, '')}/chat/completions`;
-      const requestBody = {
+      const requestBody: Record<string, unknown> = {
         model: body.model,
         messages: body.messages,
         temperature: body.temperature,
         max_tokens: body.maxTokens,
         stream: false,
       };
+      // Pass tools through if the sidecar sent them
+      if (body.tools && Array.isArray(body.tools) && body.tools.length > 0) {
+        requestBody.tools = body.tools;
+        requestBody.tool_choice = 'auto';
+      }
 
       let responseText: string;
       let status: number;

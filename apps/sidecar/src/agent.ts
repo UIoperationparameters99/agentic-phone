@@ -345,9 +345,22 @@ function createRelayModel(config: AgentConfig): LanguageModelV1 {
 
     async doStream(options) {
       // Build the OpenAI-compatible request body
+      // Convert Vercel AI SDK tools → OpenAI function-calling format
+      // Note: options.tools is part of the call options but not in the base type definition
+      const opts = options as any;
+      const tools = opts.tools?.map((t: any) => ({
+        type: 'function',
+        function: {
+          name: t.name,
+          description: t.description,
+          parameters: t.parameters,
+        },
+      })) ?? [];
+
       const requestBody = {
         model: config.model,
         messages: options.prompt,
+        tools: tools.length > 0 ? tools : undefined,
         temperature: options.temperature,
         maxTokens: options.maxTokens,
         stream: false, // non-streaming for simplicity — the relay returns the full response
