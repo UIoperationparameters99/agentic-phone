@@ -46,6 +46,11 @@ export interface AgentRuntime {
   registerTool: (name: string, tool: Tool) => void;
   run: (prompt: string, opts?: { maxTurns?: number; requireApproval?: boolean | 'auto' }) => Promise<void>;
   cancel: () => void;
+  /** Call LLM via WS relay (mobile app proxies). Returns content + tool calls. */
+  callLlmViaRelay: (messages: CoreMessage[], runId: string, turnId: string) => Promise<{
+    content: string;
+    toolCalls: Array<{ id: string; name: string; args: any }>;
+  }>;
 }
 
 export async function createAgent(config: AgentConfig): Promise<AgentRuntime> {
@@ -67,9 +72,6 @@ export async function createAgent(config: AgentConfig): Promise<AgentRuntime> {
       const maxTurns = opts.maxTurns ?? 20;
       this.context.prompt = prompt;
       this.context.runId = runId;
-
-      console.log('[agent] run() called, model type:', (this.model as any)?.provider ?? 'unknown', 'tools:', Object.keys(this.tools).length);
-      console.log('[agent] AGENTIC_LLM_RELAY:', process.env.AGENTIC_LLM_RELAY);
 
       this.context.emit({
         type: 'run_started',
@@ -103,117 +105,116 @@ export async function createAgent(config: AgentConfig): Promise<AgentRuntime> {
         });
 
         try {
-          const result = streamText({
-            model,
-            messages,
-            tools: this.tools,
-            maxSteps: 1, // single step per turn — we control the loop
-          });
+          const isRelay = process.env.AGENTIC_LLM_RELAY === 'true';
 
-          let textBuffer = '';
-          let reasoningBuffer = '';
-          const toolCallsStarted = new Set<string>();
-
-          for await (const part of result.fullStream) {
+          if (isRelay) {
+            // Relay mode: call LLM via WS relay (mobile app proxies the call).
+            // We build the OpenAI-compatible request ourselves (with tools) and
+            // emit it as an llm_request event. The mobile app calls the LLM
+            // and sends back the response.
+            const result = await this.callLlmViaRelay(messages, runId, turnId);
             if (cancelled) break;
 
-            switch (part.type) {
-              case 'text-delta':
-                textBuffer += part.textDelta;
-                this.context.emit({
-                  type: 'text_delta',
-                  runId,
-                  turnId,
-                  delta: part.textDelta,
-                });
-                break;
-              case 'reasoning':
-                reasoningBuffer += part.textDelta;
-                this.context.emit({
-                  type: 'reasoning_delta',
-                  runId,
-                  turnId,
-                  delta: part.textDelta,
-                });
-                break;
-              case 'tool-call':
-                toolCallsStarted.add(part.toolCallId);
+            // Emit text
+            if (result.content) {
+              this.context.emit({ type: 'text_delta', runId, turnId, delta: result.content });
+              messages.push({ role: 'assistant', content: result.content });
+            }
+
+            // Handle tool calls
+            if (result.toolCalls && result.toolCalls.length > 0) {
+              for (const tc of result.toolCalls) {
                 this.context.emit({
                   type: 'tool_started',
-                  runId,
-                  turnId,
-                  toolCallId: part.toolCallId,
-                  toolName: part.toolName,
-                  args: part.args,
+                  runId, turnId,
+                  toolCallId: tc.id,
+                  toolName: tc.name,
+                  args: tc.args,
                   timestamp: Date.now(),
                 });
-                break;
-              case 'tool-call-streaming-start':
-                if (!toolCallsStarted.has(part.toolCallId)) {
-                  toolCallsStarted.add(part.toolCallId);
+
+                const tool: any = this.tools[tc.name];
+                if (tool?.execute) {
+                  try {
+                    const output = await tool.execute(tc.args);
+                    this.context.emit({
+                      type: 'tool_finished',
+                      runId,
+                      toolCallId: tc.id,
+                      output,
+                      isError: false,
+                      durationMs: 0,
+                    });
+                    // Add tool result to messages for next turn
+                    messages.push({ role: 'user', content: `[Tool ${tc.name} result: ${JSON.stringify(output).slice(0, 500)}]` } as any);
+                  } catch (e: any) {
+                    this.context.emit({
+                      type: 'tool_finished',
+                      runId,
+                      toolCallId: tc.id,
+                      output: { error: e.message },
+                      isError: true,
+                      durationMs: 0,
+                    });
+                  }
+                } else {
                   this.context.emit({
-                    type: 'tool_started',
+                    type: 'tool_finished',
                     runId,
-                    turnId,
-                    toolCallId: part.toolCallId,
-                    toolName: part.toolName,
-                    args: {},
-                    timestamp: Date.now(),
+                    toolCallId: tc.id,
+                    output: { error: `Unknown tool: ${tc.name}` },
+                    isError: true,
+                    durationMs: 0,
                   });
                 }
-                break;
-              case 'finish':
-                // Vercel AI SDK v4 emits usage as part of 'finish' part.
-                if (part.usage) {
-                  const u = part.usage as any;
-                  this.context.emit({
-                    type: 'usage',
-                    runId,
-                    inputTokens: u.inputTokens ?? 0,
-                    outputTokens: u.outputTokens ?? 0,
-                    reasoningTokens: u.reasoningTokens,
-                  });
-                }
-                break;
-              case 'error':
-                // Surface the error to the user with a helpful message.
-                const errMsg = part.error instanceof Error ? part.error.message : String(part.error);
-                const userFriendly = makeUserFriendlyError(errMsg, this.config);
-                this.context.emit({
-                  type: 'text_delta',
-                  runId,
-                  turnId,
-                  delta: `\n\n⚠️ **Error:** ${userFriendly}\n`,
-                });
-                this.context.emit({
-                  type: 'run_failed',
-                  runId,
-                  error: userFriendly,
-                  timestamp: Date.now(),
-                });
-                return;
+              }
+              // Continue to next turn (the model will see the tool results)
+            } else {
+              // No tool calls — we're done
+              this.context.emit({ type: 'turn_finished', runId, turnId, timestamp: Date.now() });
+              break;
             }
+          } else {
+            // Direct mode: use streamText (original code)
+            const result = streamText({
+              model: this.model,
+              messages,
+              tools: this.tools,
+              maxSteps: 1,
+            });
+
+            let textBuffer = '';
+            for await (const part of result.fullStream) {
+              if (cancelled) break;
+              switch (part.type) {
+                case 'text-delta':
+                  textBuffer += part.textDelta;
+                  this.context.emit({ type: 'text_delta', runId, turnId, delta: part.textDelta });
+                  break;
+                case 'tool-call':
+                  this.context.emit({ type: 'tool_started', runId, turnId, toolCallId: part.toolCallId, toolName: part.toolName, args: part.args, timestamp: Date.now() });
+                  break;
+                case 'finish':
+                  if (part.usage) {
+                    const u = part.usage as any;
+                    this.context.emit({ type: 'usage', runId, inputTokens: u.inputTokens ?? 0, outputTokens: u.outputTokens ?? 0 });
+                  }
+                  break;
+                case 'error':
+                  const errMsg = (part as any).error instanceof Error ? (part as any).error.message : String((part as any).error);
+                  const userFriendly = makeUserFriendlyError(errMsg, this.config);
+                  this.context.emit({ type: 'text_delta', runId, turnId, delta: `\n\n⚠️ **Error:** ${userFriendly}\n` });
+                  this.context.emit({ type: 'run_failed', runId, error: userFriendly, timestamp: Date.now() });
+                  return;
+              }
+            }
+            messages.push({ role: 'assistant', content: textBuffer || '(no text)' });
+            // End after one turn in direct mode too
+            this.context.emit({ type: 'turn_finished', runId, turnId, timestamp: Date.now() });
+            break;
           }
 
-          // For tool results, we'd need to look at the messages array after streamText completes.
-          // Vercel AI SDK calls tool execute() during the stream — tool_finished events are
-          // emitted from within the tool's execute() via agent.context.emit().
-
-          // Append the assistant's response to messages.
-          messages.push({ role: 'assistant', content: textBuffer || '(no text)' });
-
-          this.context.emit({
-            type: 'turn_finished',
-            runId,
-            turnId,
-            timestamp: Date.now(),
-          });
-
-          // If the assistant didn't call any tools, we're done.
-          // (Vercel AI SDK's fullStream doesn't have a clean "did the model call a tool?" flag,
-          // so we check if there were any tool-call parts.)
-          // For simplicity, we end the loop after each turn — the agent can re-prompt if it wants.
-          break;
+          this.context.emit({ type: 'turn_finished', runId, turnId, timestamp: Date.now() });
         } catch (e) {
           this.context.emit({
             type: 'run_failed',
@@ -232,6 +233,80 @@ export async function createAgent(config: AgentConfig): Promise<AgentRuntime> {
       });
     },
     cancel() { /* set by run() */ },
+
+    /**
+     * Call the LLM via the relay (mobile app proxies the call).
+     * Returns parsed content + tool calls.
+     */
+    async callLlmViaRelay(messages: CoreMessage[], runId: string, turnId: string): Promise<{
+      content: string;
+      toolCalls: Array<{ id: string; name: string; args: any }>;
+    }> {
+      // Convert messages to OpenAI format
+      const openaiMessages = messages.map((m) => {
+        if (m.role === 'user' || m.role === 'system') {
+          const content = typeof m.content === 'string' ? m.content : (m.content as any[]).map((p: any) => p.text || '').join('');
+          return { role: m.role, content };
+        }
+        if (m.role === 'assistant') {
+          const content = typeof m.content === 'string' ? m.content : (m.content as any[]).map((p: any) => p.text || '').join('');
+          return { role: 'assistant', content };
+        }
+        return m;
+      });
+
+      // Build tools in OpenAI format
+      const tools = Object.entries(this.tools).map(([name, tool]: [string, any]) => ({
+        type: 'function',
+        function: {
+          name,
+          description: tool.description,
+          parameters: tool.parameters,
+        },
+      }));
+
+      const requestBody = {
+        model: this.config.model,
+        messages: openaiMessages,
+        tools: tools.length > 0 ? tools : undefined,
+        tool_choice: tools.length > 0 ? 'auto' : undefined,
+        max_tokens: 1000,
+        stream: false,
+      };
+
+      const requestId = `llm_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+      const emit = (globalThis as any).__agenticEmit as ((e: any) => void) | undefined;
+      if (!emit) throw new Error('Relay: emit not available (no WS connection)');
+
+      const responsePromise = new Promise<string>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('LLM relay timeout (60s)')), 60_000);
+        if (!(globalThis as any).__agenticLlmHandlers) (globalThis as any).__agenticLlmHandlers = new Map();
+        (globalThis as any).__agenticLlmHandlers.set(requestId, { resolve, reject, timeout });
+      });
+
+      emit({ type: 'llm_request', requestId, body: requestBody });
+
+      const responseText = await responsePromise;
+      const response = JSON.parse(responseText);
+      const choice = response.choices?.[0]?.message;
+      const content = choice?.content || '';
+      const toolCalls = (choice?.tool_calls || []).map((tc: any) => ({
+        id: tc.id,
+        name: tc.function.name,
+        args: JSON.parse(tc.function.arguments || '{}'),
+      }));
+
+      if (response.usage) {
+        this.context.emit({
+          type: 'usage',
+          runId,
+          inputTokens: response.usage.prompt_tokens ?? 0,
+          outputTokens: response.usage.completion_tokens ?? 0,
+        });
+      }
+
+      return { content, toolCalls };
+    },
   };
 
   return runtime;
@@ -351,24 +426,36 @@ function createRelayModel(config: AgentConfig): LanguageModelV1 {
       // Convert Vercel AI SDK tools → OpenAI function-calling format
       const opts = options as any;
       console.log('[relay] doStream called');
-      console.log('[relay] options keys:', Object.keys(opts));
       console.log('[relay] options.tools type:', typeof opts.tools, 'isArray:', Array.isArray(opts.tools));
-      if (Array.isArray(opts.tools)) {
-        console.log('[relay] tools length:', opts.tools.length);
-        console.log('[relay] first tool keys:', Object.keys(opts.tools[0] || {}));
-        console.log('[relay] first tool:', JSON.stringify(opts.tools[0]).slice(0, 200));
+      
+      // Get tools — the Vercel AI SDK might put them in different places
+      const rawTools = opts.tools || opts.toolDefinition || [];
+      console.log('[relay] rawTools length:', Array.isArray(rawTools) ? rawTools.length : 'not array');
+      
+      // Deep clone to avoid any proxy issues with Bun's minification
+      const toolsJson = JSON.parse(JSON.stringify(rawTools));
+      console.log('[relay] toolsJson length:', Array.isArray(toolsJson) ? toolsJson.length : 'not array');
+      if (Array.isArray(toolsJson) && toolsJson.length > 0) {
+        console.log('[relay] first tool:', JSON.stringify(toolsJson[0]).slice(0, 300));
       }
-      // The Vercel AI SDK v4 puts tools as {type: 'function', name, description, parameters}
-      // OpenAI format is {type: 'function', function: {name, description, parameters}}
-      const tools = Array.isArray(opts.tools) ? opts.tools.map((t: any) => ({
-        type: 'function',
-        function: {
-          name: t.name,
-          description: t.description,
-          parameters: t.parameters,
-        },
-      })) : [];
+      
+      // Convert to OpenAI format
+      const tools = Array.isArray(toolsJson) ? toolsJson.map((t: any) => {
+        // Handle both formats: {name, description, parameters} and {function: {name, description, parameters}}
+        const fn = t.function || t;
+        return {
+          type: 'function',
+          function: {
+            name: fn.name,
+            description: fn.description,
+            parameters: fn.parameters,
+          },
+        };
+      }) : [];
       console.log('[relay] converted tools:', tools.length);
+      if (tools.length > 0) {
+        console.log('[relay] first converted tool:', JSON.stringify(tools[0]).slice(0, 200));
+      }
 
       const requestBody = {
         model: config.model,
