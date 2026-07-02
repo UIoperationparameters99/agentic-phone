@@ -1,0 +1,27 @@
+{
+  "name": "agentic-phone",
+  "version": "0.1.0",
+  "private": true,
+  "description": "BYOK AI agentic workspace for Android — a clone of z.ai agentic mode. Next.js + Capacitor + @cline/sdk + Daytona.",
+  "license": "Apache-2.0",
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "dev": "pnpm -r --parallel dev",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "mobile:dev": "pnpm --filter @agentic/mobile dev",
+    "mobile:build": "pnpm --filter @agentic/mobile build",
+    "mobile:cap:sync": "pnpm --filter @agentic/mobile cap sync",
+    "mobile:cap:android": "pnpm --filter @agentic/mobile cap add android",
+    "mobile:apk": "pnpm --filter @agentic/mobile build:apk",
+    "sidecar:dev": "pnpm --filter @agentic/sidecar dev",
+    "sidecar:build": "pnpm --filter @agentic/sidecar build"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

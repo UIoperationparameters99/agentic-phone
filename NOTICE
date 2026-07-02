@@ -1,0 +1,8 @@
+agentic-phone
+Copyright 2026 agentic-phone contributors
+
+This product includes software developed by:
+  - The Cline project (https://github.com/cline/cline) — @cline/sdk, Apache-2.0
+  - The Next.js project (https://nextjs.org) — MIT
+  - The Capacitor project (https://capacitorjs.com) — MIT
+  - The Vercel AI SDK project (https://sdk.vercel.ai) — Apache-2.0
