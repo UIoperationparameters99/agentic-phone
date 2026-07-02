@@ -6,6 +6,7 @@
  */
 
 import { streamText, type CoreMessage, type Tool } from 'ai';
+import type { LanguageModelV1 } from 'ai';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
@@ -40,6 +41,8 @@ export interface AgentRuntime {
   config: AgentConfig;
   context: AgentContext;
   tools: Record<string, Tool>;
+  /** The underlying Vercel AI SDK model (used by Task tool for subagents). */
+  model: LanguageModelV1;
   registerTool: (name: string, tool: Tool) => void;
   run: (prompt: string, opts?: { maxTurns?: number; requireApproval?: boolean | 'auto' }) => Promise<void>;
   cancel: () => void;
@@ -55,6 +58,7 @@ export async function createAgent(config: AgentConfig): Promise<AgentRuntime> {
       emit: () => {/* set by transport layer */},
     },
     tools: {},
+    model,
     registerTool(name, tool) {
       this.tools[name] = tool;
     },
@@ -282,6 +286,11 @@ You have these tools:
 - LS(path) — list directory contents
 - TodoWrite(todos) — update the plan/todo list (one in_progress at a time)
 - Skill(command) — invoke a skill (loads SKILL.md into context)
+- WebSearch(query, num?) — search the web (DuckDuckGo, no API key needed)
+- WebFetch(url, format?, maxLength?) — fetch a web page and extract text
+- Task(description, prompt, subagent_type, model?) — launch a typed subagent
+
+Subagent types for Task: Explore (read-only codebase exploration), Plan (design plans), general-purpose (multi-step tasks), frontend-styling-expert (CSS/Tailwind polish), full-stack-developer (full features).
 
 Rules:
 1. ALWAYS start complex tasks by writing a todo list with TodoWrite.
@@ -292,6 +301,9 @@ Rules:
 6. Be concise in your text responses — show your work via tool calls.
 7. If you need to install a package, use Bash with the appropriate package manager (pip, npm, etc.).
 8. The user is on a phone — keep text responses short and skimmable.
+9. Use WebSearch for current information (news, docs, latest versions).
+10. Use WebFetch to read specific URLs.
+11. Use Task to delegate complex subtasks — keeps your main context clean.
 
 You are autonomous. The user may disconnect; keep working. When you finish a task, mark all todos as completed and give a brief summary.`;
 }

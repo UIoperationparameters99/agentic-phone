@@ -18,27 +18,21 @@ export interface DaytonaSandbox {
   id: string;
   name: string;
   state: 'started' | 'stopped' | 'creating' | 'error';
-  runner: {
-    language: string;
-    image: string;
-  };
-  info?: {
-    id: string;
-    name: string;
-    state: string;
-    class: string;
-    cpu: number;
-    memory: number;
-    disk: number;
-    region: string;
-    nodeDomain: string;
-    previewUrl?: string;
-  };
+  target?: string;
+  snapshot?: string;
+  user?: string;
+  env?: Record<string, string>;
+  cpu: number;
+  memory: number;
+  disk: number;
+  public?: boolean;
+  /** Public preview URL — derived from sandbox id + target region. */
+  previewUrl?: string;
 }
 
 export interface CreateSandboxOptions {
-  /** Image to use. Defaults to a Ubuntu 22.04 + Node + Python image. */
-  image?: string;
+  /** Snapshot/image to use. Defaults to 'daytonaio/sandbox:0.8.0'. */
+  snapshot?: string;
   /** Env vars to inject (LLM keys, etc.). */
   envVars?: Record<string, string>;
   /** Resources. Default: 1 vCPU, 1 GB RAM, 3 GB disk. */
@@ -60,21 +54,34 @@ export class DaytonaClient {
    * Spawn a new sandbox. Returns the sandbox + preview URL.
    *
    * Calls `POST /sandbox` (v1).
+   *
+   * Note: when using the default 'daytonaio/sandbox:0.8.0' snapshot,
+   * resource overrides (cpu/memory/disk) are NOT allowed — the snapshot
+   * fixes them. To customize resources, create a custom snapshot first.
    */
   async create(opts: CreateSandboxOptions = {}): Promise<DaytonaSandbox> {
-    const body = {
-      image: opts.image ?? 'daytonaio/workspace:latest',
-      cpu: opts.cpu ?? 1,
-      memory: opts.memory ?? 1,
-      disk: opts.disk ?? 3,
+    // Build body — only include resource fields if a custom snapshot is provided.
+    const usingCustomSnapshot = !!opts.snapshot;
+    const body: Record<string, unknown> = {
       autoStop: opts.autoStop ?? 0,
       env: opts.envVars ?? {},
       volumes: opts.volumes ?? [],
       public: opts.public ?? true,
-      language: 'python',
     };
+    if (usingCustomSnapshot) {
+      body.snapshot = opts.snapshot;
+      body.cpu = opts.cpu ?? 1;
+      body.memory = opts.memory ?? 1;
+      body.disk = opts.disk ?? 3;
+    }
     const res = await this.request('POST', '/sandbox', body);
-    return res as DaytonaSandbox;
+    const sb = res as DaytonaSandbox;
+    // Compute preview URL — Daytona exposes preview URLs as https://{sandboxId}-3000.{target}.daytona.io
+    if (!sb.previewUrl) {
+      const target = sb.target ?? 'us';
+      sb.previewUrl = `https://${sb.id}-3000.${target}.daytona.io`;
+    }
+    return sb;
   }
 
   /**
@@ -115,18 +122,17 @@ export class DaytonaClient {
 
   /**
    * Execute a command in the sandbox (non-interactive).
-   * Uses `POST /sandbox/{id}/toolbox/execute`.
+   * Uses `POST /toolbox/{id}/toolbox/process/execute` (correct path as of July 2026).
    */
   async execute(sandboxId: string, command: string, cwd = '/home/daytona'): Promise<{
     exitCode: number;
-    stdout: string;
-    stderr: string;
+    result: string;
   }> {
-    return (await this.request('POST', `/sandbox/${sandboxId}/toolbox/execute`, {
+    return (await this.request('POST', `/toolbox/${sandboxId}/toolbox/process/execute`, {
       command,
       cwd,
       timeout: 60,
-    })) as { exitCode: number; stdout: string; stderr: string };
+    })) as { exitCode: number; result: string };
   }
 
   /**
@@ -143,11 +149,9 @@ export class DaytonaClient {
    * Mobile connects its WebSocket to this URL.
    */
   getPreviewUrl(sandbox: DaytonaSandbox): string {
-    // Daytona exposes preview URLs in the form `https://{sandboxId}-{port}.{region}.daytona.io`
-    // For port 3000 (our sidecar): `https://{sandboxId}-3000.{region}.daytona.io`
-    if (sandbox.info?.previewUrl) return sandbox.info.previewUrl;
-    const region = sandbox.info?.region ?? 'us';
-    return `https://${sandbox.id}-3000.${region}.daytona.io`;
+    if (sandbox.previewUrl) return sandbox.previewUrl;
+    const target = sandbox.target ?? 'us';
+    return `https://${sandbox.id}-3000.${target}.daytona.io`;
   }
 
   // ─── Internals ──────────────────────────────────────────────────────────

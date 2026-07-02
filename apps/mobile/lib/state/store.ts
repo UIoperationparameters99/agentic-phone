@@ -232,12 +232,11 @@ export const useStore = create<MobileState>((set, get) => ({
   sessions: [],
 
   async loadSessions() {
-    // Sessions are stored locally on-device (not in the sandbox).
-    // For v1, we persist a simple list in localStorage (sessions don't contain secrets).
-    if (typeof localStorage === 'undefined') return;
-    const raw = localStorage.getItem('agentic_sessions');
-    if (!raw) return;
-    set({ sessions: JSON.parse(raw) });
+    // Sessions are stored locally on-device (not in the sandbox) via SessionManager.
+    // No secrets — just metadata (id, title, timestamps, sandboxId, snapshotId).
+    const { SessionManager } = await import('../sandbox/session');
+    const sessions = SessionManager.listSaved();
+    set({ sessions: sessions.map((s) => ({ id: s.id, title: s.title, createdAt: s.createdAt, lastActiveAt: s.lastActiveAt })) });
   },
 }));
 

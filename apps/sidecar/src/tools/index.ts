@@ -16,6 +16,9 @@ import { globTool } from './glob.js';
 import { lsTool } from './ls.js';
 import { todoWriteTool, todoReadTool } from './todo.js';
 import { skillTool } from './skill.js';
+import { webSearchTool } from './web-search.js';
+import { webFetchTool } from './web-fetch.js';
+import { taskTool } from './task.js';
 
 export interface ToolContext {
   workspace: string;
@@ -33,4 +36,7 @@ export function registerTools(agent: AgentRuntime, ctx: ToolContext) {
   agent.registerTool('TodoWrite', todoWriteTool(agent));
   agent.registerTool('TodoRead', todoReadTool());
   agent.registerTool('Skill', skillTool(ctx));
+  agent.registerTool('WebSearch', webSearchTool(ctx));
+  agent.registerTool('WebFetch', webFetchTool(ctx));
+  agent.registerTool('Task', taskTool(agent, ctx));
 }

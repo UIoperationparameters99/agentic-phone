@@ -3,11 +3,44 @@
  *
  * Coordinates Daytona REST API (sandbox lifecycle) with the WS client
  * (event stream from the sidecar running inside the sandbox).
+ *
+ * Persistence model:
+ *   - On destroy: snapshot the workspace via Daytona snapshot API, save snapshot id locally.
+ *   - On spawn: if a snapshot id exists, restore from it; else fresh sandbox.
+ *   - Sessions list: persisted to localStorage on mobile (no secrets — just metadata).
  */
 
 import { DaytonaClient, type DaytonaSandbox, type CreateSandboxOptions } from './daytona';
 import { envVarsForConfig } from '../byok/providers';
 import type { ByokConfig, SandboxSession, SessionStatus } from '@agentic/shared-types';
+
+interface SavedSession {
+  id: string;
+  title: string;
+  createdAt: number;
+  lastActiveAt: number;
+  sandboxId?: string;
+  previewUrl?: string;
+  snapshotId?: string;
+  status: SessionStatus;
+}
+
+const SESSIONS_KEY = 'agentic_sessions_v1';
+
+function loadSavedSessions(): SavedSession[] {
+  if (typeof localStorage === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(SESSIONS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveSessions(sessions: SavedSession[]): void {
+  if (typeof localStorage === 'undefined') return;
+  localStorage.setItem(SESSIONS_KEY, JSON.stringify(sessions));
+}
 
 /**
  * Manages a single sandbox session.
@@ -20,6 +53,7 @@ export class SessionManager {
   private daytona: DaytonaClient;
   private session: SandboxSession | null = null;
   private listeners = new Set<(s: SandboxSession | null) => void>();
+  private snapshotId: string | null = null;
 
   constructor(private byok: ByokConfig) {
     this.daytona = new DaytonaClient(byok.sandbox.apiKey);
@@ -36,6 +70,26 @@ export class SessionManager {
     if (!this.session) return;
     this.session = { ...this.session, status, lastActiveAt: Date.now(), ...patch };
     this.listeners.forEach((cb) => cb(this.session));
+    this.persistSession();
+  }
+
+  private persistSession() {
+    if (!this.session) return;
+    const sessions = loadSavedSessions();
+    const idx = sessions.findIndex((s) => s.id === this.session!.id);
+    const entry: SavedSession = {
+      id: this.session.id,
+      title: 'Session ' + new Date(this.session.createdAt).toLocaleString(),
+      createdAt: this.session.createdAt,
+      lastActiveAt: this.session.lastActiveAt,
+      sandboxId: this.session.sandboxId,
+      previewUrl: this.session.previewUrl,
+      snapshotId: this.snapshotId ?? undefined,
+      status: this.session.status,
+    };
+    if (idx >= 0) sessions[idx] = entry;
+    else sessions.unshift(entry);
+    saveSessions(sessions);
   }
 
   /** Spawn a fresh sandbox + wait for the sidecar to be reachable. */
@@ -43,11 +97,11 @@ export class SessionManager {
     if (this.session) throw new Error('Session already exists — call destroy() first.');
 
     const envVars = envVarsForConfig(this.byok);
+    // NOTE: When using Daytona's default snapshot (daytonaio/sandbox:0.8.0),
+    // resource overrides are not allowed — the snapshot fixes them at 1 vCPU / 1 GB / 3 GB.
+    // To get more resources, create a custom snapshot first.
     const opts: CreateSandboxOptions = {
       envVars,
-      cpu: 2,
-      memory: 2,
-      disk: 5,
       autoStop: 0, // indefinite — agent may run long
       public: true, // need a preview URL for WS
     };
@@ -76,6 +130,13 @@ export class SessionManager {
   async pause(): Promise<void> {
     if (!this.session) return;
     this.setStatus('stopping');
+    // Create a snapshot before stopping so we can restore state.
+    try {
+      const snap = await this.daytona.snapshot(this.session.sandboxId, `agentic-${this.session.id}`);
+      this.snapshotId = snap.id;
+    } catch (e) {
+      console.warn('[session] snapshot failed (continuing with stop):', e);
+    }
     await this.daytona.stop(this.session.sandboxId);
     this.setStatus('paused');
   }
@@ -93,6 +154,15 @@ export class SessionManager {
   async destroy(): Promise<void> {
     if (!this.session) return;
     this.setStatus('stopping');
+    // Snapshot before destroy so the session can be re-spawned later.
+    try {
+      if (!this.snapshotId) {
+        const snap = await this.daytona.snapshot(this.session.sandboxId, `agentic-${this.session.id}-final`);
+        this.snapshotId = snap.id;
+      }
+    } catch (e) {
+      console.warn('[session] final snapshot failed:', e);
+    }
     try {
       await this.daytona.delete(this.session.sandboxId);
     } catch (e) {
@@ -105,6 +175,17 @@ export class SessionManager {
   /** Get the current session (or null). */
   current(): SandboxSession | null {
     return this.session;
+  }
+
+  /** List all saved sessions (from localStorage). */
+  static listSaved(): SavedSession[] {
+    return loadSavedSessions();
+  }
+
+  /** Clear all saved sessions from localStorage. */
+  static clearSaved(): void {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.removeItem(SESSIONS_KEY);
   }
 
   // ─── Internals ──────────────────────────────────────────────────────────

@@ -8,8 +8,6 @@ import { SessionBar } from './session-bar';
 import { TodoPanel } from './todo-panel';
 import { ChatMessageView } from './message';
 import { ChatInput } from './input';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { useToast } from '@/components/ui/toaster';
 
 export function ChatView() {
   const messages = useStore((s) => s.messages);
@@ -18,7 +16,6 @@ export function ChatView() {
   const loadByok = useStore((s) => s.loadByok);
   const session = useStore((s) => s.session);
   const scrollRef = React.useRef<HTMLDivElement>(null);
-  const { toast } = useToast();
 
   // Load BYOK config on first mount.
   React.useEffect(() => {
@@ -33,14 +30,16 @@ export function ChatView() {
   }, [messages]);
 
   return (
-    <div className="flex flex-col h-screen">
-      {/* Top bar */}
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-bg">
+    <div className="flex flex-col h-screen bg-bg">
+      {/* Top bar — z.ai style: minimal, chrome wordmark */}
+      <div className="flex items-center gap-2 px-3 py-2.5 border-b border-border bg-bg safe-top">
         <div className="flex items-center gap-2 flex-1">
-          <div className="w-6 h-6 rounded-md bg-accent flex items-center justify-center">
-            <span className="text-white text-xs font-bold">A</span>
+          {/* z.ai-style icon: dark rounded square with white Z */}
+          <div className="w-6 h-6 rounded-md bg-surface-3 flex items-center justify-center">
+            <span className="text-fg text-xs font-bold">Z</span>
           </div>
-          <span className="text-sm font-semibold">Agentic</span>
+          {/* Chrome wordmark — liquid-metal gradient sweep */}
+          <span className="zai-chrome-text text-sm font-semibold tracking-tight">Agentic</span>
         </div>
         <Link href="/files" className="p-2 text-muted hover:text-fg transition-colors" aria-label="Files">
           <FolderTree className="h-4 w-4" />
@@ -60,8 +59,8 @@ export function ChatView() {
 
       <TodoPanel />
 
-      {/* Chat transcript */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto">
+      {/* Chat transcript — z.ai canvas: #0D0D0D, full-width assistant blocks */}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto bg-bg">
         {messages.length === 0 ? (
           <EmptyState hasByok={!!byok} byokLoaded={byokLoaded} hasSession={!!session} />
         ) : (
@@ -82,7 +81,7 @@ function EmptyState({ hasByok, byokLoaded, hasSession }: { hasByok: boolean; byo
   if (!byokLoaded) {
     return (
       <div className="flex flex-col items-center justify-center h-full px-6 text-center text-muted">
-        <div className="w-10 h-10 rounded-full border-2 border-accent border-t-transparent animate-spin mb-4" />
+        <div className="w-10 h-10 rounded-full border-2 border-brand-dark border-t-transparent animate-spin mb-4" />
         <div className="text-sm">Loading…</div>
       </div>
     );
@@ -90,14 +89,16 @@ function EmptyState({ hasByok, byokLoaded, hasSession }: { hasByok: boolean; byo
   if (!hasByok) {
     return (
       <div className="flex flex-col items-center justify-center h-full px-6 text-center">
-        <div className="w-12 h-12 rounded-xl bg-accent/20 flex items-center justify-center mb-4">
-          <Settings className="w-6 h-6 text-accent" />
+        {/* z.ai-style hero: chrome wordmark + dark icon */}
+        <div className="w-14 h-14 rounded-2xl bg-surface-3 flex items-center justify-center mb-5">
+          <span className="text-fg text-2xl font-bold">Z</span>
         </div>
-        <div className="text-base font-semibold mb-2">Welcome to Agentic</div>
-        <div className="text-sm text-muted mb-6 max-w-xs">
-          Connect your LLM API key and Daytona sandbox to give your AI its own computer.
+        <div className="zai-chrome-text text-xl font-semibold mb-2 tracking-tight">Agentic</div>
+        <div className="text-sm text-fg-secondary mb-1">Your AI, on your phone, with its own computer.</div>
+        <div className="text-xs text-muted mb-6 max-w-xs">
+          Connect your LLM API key and Daytona sandbox to begin.
         </div>
-        <Link href="/byok" className="text-accent text-sm font-medium underline underline-offset-4">
+        <Link href="/byok" className="px-4 py-2 rounded-btn bg-fg text-bg text-sm font-medium hover:bg-fg-secondary transition-colors">
           Set up keys →
         </Link>
       </div>
@@ -111,7 +112,7 @@ function EmptyState({ hasByok, byokLoaded, hasSession }: { hasByok: boolean; byo
         </div>
         <div className="text-base font-semibold mb-2">Ready when you are</div>
         <div className="text-sm text-muted mb-6 max-w-xs">
-          Tap <span className="text-fg font-medium">Start session</span> to spin up your AI's cloud computer.
+          Tap <span className="text-fg font-medium">Start session</span> to spin up your AI&apos;s cloud computer.
         </div>
       </div>
     );

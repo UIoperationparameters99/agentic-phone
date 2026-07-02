@@ -1,20 +1,30 @@
 @import 'tailwindcss';
 
 @theme {
-  --color-bg: #0a0a0a;
-  --color-surface: #141414;
-  --color-surface-2: #1c1c1c;
-  --color-border: #262626;
-  --color-fg: #fafafa;
-  --color-muted: #737373;
-  --color-accent: #3b82f6;
-  --color-accent-hover: #2563eb;
-  --color-success: #22c55e;
-  --color-warning: #eab308;
-  --color-error: #ef4444;
+  /* ─── z.ai brand tokens ──────────────────────────────────────────── */
+  --color-brand: #0B7FFF;
+  --color-brand-dark: #4099FF;
+  --color-brand-hover: #0066DD;
 
-  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
-  --font-mono: 'JetBrains Mono', 'SF Mono', Menlo, monospace;
+  --color-bg: #0D0D0D;
+  --color-bg-page: #161616;
+  --color-surface: #202020;
+  --color-surface-2: #2B2B2B;
+  --color-surface-3: #363636;
+  --color-border: rgba(255, 255, 255, 0.10);
+  --color-border-strong: rgba(255, 255, 255, 0.18);
+
+  --color-fg: #F8F8F8;
+  --color-fg-secondary: #A8AAB8;
+  --color-muted: #747689;
+
+  --color-danger: #FF5C5C;
+  --color-warning: #FF8A30;
+  --color-success: #46BF72;
+  --color-purple: #7B5CE5;
+
+  --font-sans: 'Geist', 'PingFang SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'GeistMono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
 :root {
@@ -26,8 +36,11 @@ html, body {
   color: var(--color-fg);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   -webkit-tap-highlight-color: transparent;
   overscroll-behavior: none;
+  /* Disable text size adjust on orientation change */
+  -webkit-text-size-adjust: 100%;
 }
 
 /* Safe area for mobile (notches, gestures) */
@@ -36,16 +49,31 @@ html, body {
 .safe-left { padding-left: env(safe-area-inset-left); }
 .safe-right { padding-right: env(safe-area-inset-right); }
 
-/* Scrollbar styling for desktop / debugging */
+/* Scrollbar styling */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 3px; }
+::-webkit-scrollbar-thumb { background: var(--color-border-strong); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--color-muted); }
 
 /* Disable text selection on UI chrome — only allow in message bodies */
 button, .no-select { user-select: none; -webkit-user-select: none; }
 
-/* Markdown rendering */
+/* z.ai chrome wordmark — liquid-metal gradient sweep */
+.zai-chrome-text {
+  background-image: linear-gradient(90deg,#191A1D,#222327 20%,#44454D 35%,#747689 44%,#A8AAB8,#747689 56%,#44454D 65%,#222327 80%,#191A1D);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  animation: chrome-shimmer 8s linear infinite;
+}
+@keyframes chrome-shimmer {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 200% 50%; }
+}
+
+/* Markdown rendering (z.ai-style: full-width assistant blocks, not bubbles) */
 .prose pre {
   background: #000;
   border: 1px solid var(--color-border);
@@ -68,7 +96,7 @@ button, .no-select { user-select: none; -webkit-user-select: none; }
 .prose h1 { font-size: 1.25rem; }
 .prose h2 { font-size: 1.125rem; }
 .prose h3 { font-size: 1rem; }
-.prose a { color: var(--color-accent); text-decoration: underline; }
+.prose a { color: var(--color-brand-dark); text-decoration: underline; }
 .prose table {
   border-collapse: collapse;
   margin: 8px 0;
@@ -83,8 +111,8 @@ button, .no-select { user-select: none; -webkit-user-select: none; }
 }
 .prose th { background: var(--color-surface-2); font-weight: 600; }
 .prose blockquote {
-  border-left: 3px solid var(--color-border);
+  border-left: 3px solid var(--color-border-strong);
   padding-left: 12px;
-  color: var(--color-muted);
+  color: var(--color-fg-secondary);
   margin: 8px 0;
 }
