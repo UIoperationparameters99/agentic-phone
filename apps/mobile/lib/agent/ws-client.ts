@@ -162,10 +162,10 @@ export class AgentWsClient {
         status = res.status;
         responseText = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
       } else {
-        // Web dev — route through the dev proxy to avoid CORS.
-        // The dev proxy (scripts/dev-proxy.mjs) forwards to any URL.
-        // In production (APK), CapacitorHttp is used instead (no CORS).
-        const proxyUrl = `${process.env.NEXT_PUBLIC_DEV_PROXY ?? 'http://localhost:8787'}/proxy`;
+        // Web dev only — use the dev proxy to avoid CORS.
+        // In the APK, CapacitorHttp is used (no CORS, no proxy needed).
+        // This code path is unreachable in the APK because Capacitor.isNativePlatform() is true.
+        const proxyUrl = 'http://localhost:8787/proxy';
         const proxyRes = await fetch(proxyUrl, {
           method: 'POST',
           headers: {

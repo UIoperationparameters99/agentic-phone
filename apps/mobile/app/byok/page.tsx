@@ -118,8 +118,10 @@ export default function ByokPage() {
           readTimeout: 15_000,
         });
       } else {
-        // Web dev — use the dev proxy to avoid CORS
-        const proxyUrl = `${process.env.NEXT_PUBLIC_DEV_PROXY ?? 'http://localhost:8787'}/proxy`;
+        // Web dev only — use the dev proxy to avoid CORS.
+        // In the APK, CapacitorHttp is used (no CORS, no proxy needed).
+        // This code path is unreachable in the APK because Capacitor.isNativePlatform() is true.
+        const proxyUrl = 'http://localhost:8787/proxy';
         const proxyRes = await fetch(proxyUrl, {
           method: 'GET',
           headers: { 'X-Target-URL': modelsUrl, Authorization: `Bearer ${llmKey.trim()}` },

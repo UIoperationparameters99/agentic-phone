@@ -13,7 +13,8 @@
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import type { SandboxProviderConfig } from '@agentic/shared-types';
 
-const DAYTONA_API_BASE = process.env.NEXT_PUBLIC_DEV_DAYTONA_BASE ?? 'https://app.daytona.io/api';
+// Always use the real Daytona API. Never localhost.
+const DAYTONA_API_BASE = 'https://app.daytona.io/api';
 
 export interface DaytonaSandbox {
   id: string;
