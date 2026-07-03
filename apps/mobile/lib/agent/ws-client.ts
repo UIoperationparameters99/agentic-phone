@@ -73,11 +73,26 @@ export class AgentWsClient {
         try {
           const msg = JSON.parse(ev.data as string) as ServerMessage;
           this.handlers.onMessage?.(msg);
+
+          // Handle tool_result responses (from executeTool requests)
+          if ((msg as any).type === 'tool_result') {
+            const { requestId, result, error } = msg as any;
+            const handler = this.toolHandlers.get(requestId);
+            if (handler) {
+              clearTimeout(handler.timeout);
+              this.toolHandlers.delete(requestId);
+              if (error) handler.reject(new Error(error));
+              else handler.resolve(result);
+            }
+            return;
+          }
+
           if (msg.type === 'event') {
-            // Check if this is an llm_request event (relay mode)
+            // Check if this is an llm_request event (old relay mode — no longer used)
             const event = msg.event as any;
             if (event.type === 'llm_request') {
-              this.handleLlmRequest(event).catch(console.error);
+              // Ignore — we don't use relay mode anymore
+              return;
             } else {
               this.handlers.onEvent?.(msg.event);
             }
@@ -242,6 +257,27 @@ export class AgentWsClient {
     }
     this.setStatus('disconnected');
   }
+
+  /**
+   * Execute a tool on the sidecar. Sends a tool_call message and waits for the result.
+   * Uses a promise that resolves when the sidecar sends back the tool_result.
+   */
+  executeTool(toolName: string, args: unknown): Promise<unknown> {
+    return new Promise((resolve, reject) => {
+      const requestId = `tool_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+      const timeout = setTimeout(() => reject(new Error(`Tool ${toolName} timed out (120s)`)), 120_000);
+      this.toolHandlers.set(requestId, { resolve, reject, timeout });
+
+      this.send({
+        type: 'execute_tool',
+        requestId,
+        toolName,
+        args,
+      } as any);
+    });
+  }
+
+  private toolHandlers = new Map<string, { resolve: (v: unknown) => void; reject: (e: any) => void; timeout: any }>();
 
   /** Get current connection status. */
   getStatus(): ConnectionStatus {

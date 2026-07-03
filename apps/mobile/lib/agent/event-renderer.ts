@@ -56,7 +56,9 @@ export function reduceEvent(
 
   switch (event.type) {
     case 'run_started': {
-      // User message (the prompt) + a fresh assistant message (will fill in).
+      // Only create the user message here. The assistant message is created
+      // by turn_started. (Previously this created an empty assistant message
+      // that caused duplicates.)
       const userMsg: ChatMessage = {
         id: `u_${event.runId}`,
         role: 'user',
@@ -65,15 +67,7 @@ export function reduceEvent(
         startedAt: event.timestamp,
         runId: event.runId,
       };
-      const aiMsg: ChatMessage = {
-        id: `a_${event.runId}`,
-        role: 'assistant',
-        content: '',
-        toolCalls: [],
-        runId: event.runId,
-        startedAt: event.timestamp,
-      };
-      return { messages: [...messages, userMsg, aiMsg], todos: null };
+      return { messages: [...messages, userMsg], todos: null };
     }
 
     case 'run_finished': {
@@ -120,12 +114,28 @@ export function reduceEvent(
     }
 
     case 'text_delta': {
-      const updated = messages.map((m) =>
-        m.turnId === event.turnId && m.role === 'assistant'
-          ? { ...m, content: m.content + event.delta }
-          : m,
-      );
-      return { messages: updated, todos: null };
+      // Find the assistant message for this turn. If it doesn't exist yet (e.g.,
+      // text_delta arrived before turn_started), create it.
+      const existing = messages.find(m => m.turnId === event.turnId && m.role === 'assistant');
+      if (existing) {
+        const updated = messages.map((m) =>
+          m.turnId === event.turnId && m.role === 'assistant'
+            ? { ...m, content: m.content + event.delta }
+            : m,
+        );
+        return { messages: updated, todos: null };
+      }
+      // Create the assistant message on-the-fly
+      const aiMsg: ChatMessage = {
+        id: `a_${event.turnId}`,
+        role: 'assistant',
+        content: event.delta,
+        toolCalls: [],
+        runId: event.runId,
+        turnId: event.turnId,
+        startedAt: Date.now(),
+      };
+      return { messages: [...messages, aiMsg], todos: null };
     }
 
     case 'reasoning_delta': {
@@ -138,17 +148,33 @@ export function reduceEvent(
     }
 
     case 'tool_started': {
-      // Find the current assistant message (most recent, not finished).
-      const updated = messages.map((m, i) => {
-        if (i !== messages.length - 1 || m.role !== 'assistant') return m;
-        const tc: ToolCallState = {
-          id: event.toolCallId,
-          toolName: event.toolName,
-          args: event.args,
-          status: 'running',
-          startedAt: event.timestamp,
+      // Find or create the assistant message for this turn.
+      let existing = messages.find(m => m.turnId === event.turnId && m.role === 'assistant');
+      if (!existing) {
+        // Create it on-the-fly
+        existing = {
+          id: `a_${event.turnId}`,
+          role: 'assistant',
+          content: '',
+          toolCalls: [],
+          runId: event.runId,
+          turnId: event.turnId,
+          startedAt: Date.now(),
         };
-        return { ...m, toolCalls: [...m.toolCalls, tc] };
+        messages = [...messages, existing];
+      }
+      const updated = messages.map((m) => {
+        if (m.turnId === event.turnId && m.role === 'assistant') {
+          const tc: ToolCallState = {
+            id: event.toolCallId,
+            toolName: event.toolName,
+            args: event.args,
+            status: 'running',
+            startedAt: event.timestamp,
+          };
+          return { ...m, toolCalls: [...m.toolCalls, tc] };
+        }
+        return m;
       });
       return { messages: updated, todos: null };
     }

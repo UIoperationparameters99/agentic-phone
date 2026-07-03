@@ -135,28 +135,28 @@ export const useStore = create<MobileState>((set, get) => ({
   },
 
   async pauseSession() {
-    const { sessionManager } = get();
-    if (sessionManager) await sessionManager.pause();
-    const { wsClient } = get();
+    const { sessionManager, wsClient } = get();
     if (wsClient) await wsClient.disconnect();
-    set({ session: get().session ? { ...get().session!, status: 'paused' } : null });
+    if (sessionManager) await sessionManager.pause();
+    // DON'T clear messages — preserve chat history across pause/resume
+    if (get().session) {
+      set({ session: { ...get().session!, status: 'paused' }, wsClient: null, connStatus: 'disconnected' });
+    }
   },
 
   async resumeSession() {
     const { sessionManager } = get();
     if (sessionManager) await sessionManager.resume();
-    const { session, byok } = get();
+    const { session } = get();
     if (!session) return;
+    // Reconnect WS — messages are preserved (no clear)
     const wsClient = new AgentWsClient(`wss://${new URL(session.previewUrl).host}/ws`, {
       onStatusChange: (status) => set({ connStatus: status }),
       onEvent: (event) => handleEvent(event, set, get),
       onMessage: (msg) => handleMessage(msg, set, get),
-      llmRelay: byok ? {
-        apiKey: byok.llm.apiKey,
-        baseUrl: byok.llm.baseUrl ?? LLM_PROVIDERS[byok.llm.provider].baseUrl,
-      } : undefined,
     });
     await wsClient.connect();
+    // DON'T clear messages — this is a resume, not a new session
     set({ wsClient, connStatus: 'connected' });
   },
 
@@ -177,10 +177,19 @@ export const useStore = create<MobileState>((set, get) => ({
   pendingApprovals: [],
 
   sendPrompt(prompt) {
-    const { wsClient } = get();
-    if (!wsClient) return;
+    const { wsClient, byok } = get();
+    if (!wsClient || !byok) return;
     set({ isRunning: true });
-    wsClient.run(prompt);
+
+    // Run the agent loop on the mobile app (calls LLM directly, sends tools to sidecar)
+    import('../agent/loop').then(({ runAgentLoop }) => {
+      runAgentLoop(prompt, byok, wsClient, (event) => handleEvent(event, set, get))
+        .then(() => set({ isRunning: false }))
+        .catch((e) => {
+          console.error('[agent] loop error:', e);
+          set({ isRunning: false });
+        });
+    });
   },
 
   cancelRun() {
