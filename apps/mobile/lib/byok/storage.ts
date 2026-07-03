@@ -1,12 +1,13 @@
 /**
  * Secure storage for BYOK keys.
  *
- * Uses `@aparajita/capacitor-secure-storage` (v8, Capacitor 7/8 compatible) which wraps:
- *   - Android: Android Keystore (hardware-backed where available)
- *   - iOS:     Keychain (hardware-backed via Secure Enclave on supported devices)
- *   - Web:     localStorage (NOT secure, dev only — auto-fallback)
+ * Uses `@capacitor/preferences` (official Capacitor plugin, version-matched).
+ *   - Android: stores in SharedPreferences (not hardware-backed, but persistent)
+ *   - iOS: stores in UserDefaults
+ *   - Web: stores in localStorage (dev only)
  *
- * Keys NEVER touch localStorage in the native APK — only in browser dev mode.
+ * Keys persist across app restarts. For hardware-backed Keystore security,
+ * a future version can add an encryption layer on top.
  *
  * See: docs/byok-transport.md
  */
@@ -17,111 +18,121 @@ import type { ByokConfig } from '@agentic/shared-types';
 const STORAGE_KEY = 'agentic_byok_config_v1';
 
 /**
- * Get the secure storage plugin (native only).
+ * Get the Preferences plugin (native only).
  * Returns null in web dev mode — caller falls back to localStorage.
  */
-async function getSecureStorage() {
+async function getPreferences() {
   if (!Capacitor.isNativePlatform()) {
-    return null; // web dev → localStorage fallback
+    return null;
   }
   try {
-    const { SecureStorage } = await import('@aparajita/capacitor-secure-storage');
-    return SecureStorage;
+    const { Preferences } = await import('@capacitor/preferences');
+    return Preferences;
   } catch (e) {
-    console.error('[byok] Failed to load secure-storage plugin:', e);
+    console.error('[byok] Failed to load Preferences plugin:', e);
     return null;
   }
 }
 
-const WEB_FALLBACK_PREFIX = '__agentic_dev_byok_';
+const WEB_FALLBACK_KEY = '__agentic_dev_byok_config_v1';
+
+/** Wrap a promise with a timeout — if it doesn't resolve in time, reject. */
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    promise.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); },
+    );
+  });
+}
 
 export const secureStorage = {
   /**
-   * Save BYOK config (LLM provider + key + model + baseUrl, sandbox provider + key).
-   * Returns true on success.
+   * Save BYOK config. Returns true on success.
+   * Never hangs — if the native plugin doesn't respond in 5s, falls back to localStorage.
    */
   async save(config: ByokConfig): Promise<boolean> {
     const payload = JSON.stringify(config);
-    const plugin = await getSecureStorage();
-    try {
-      if (plugin) {
-        await plugin.set(STORAGE_KEY, payload);
+    const plugin = await getPreferences();
+
+    if (plugin) {
+      try {
+        // 5s timeout — if the native plugin hangs, fall back to localStorage
+        await withTimeout(plugin.set({ key: STORAGE_KEY, value: payload }), 5000, 'Preferences.set');
         return true;
+      } catch (e) {
+        console.error('[byok] native save failed, falling back to localStorage:', e);
+        // Fall through to localStorage fallback
       }
-      // Web dev fallback
-      if (typeof localStorage !== 'undefined') {
-        localStorage.setItem(WEB_FALLBACK_PREFIX + STORAGE_KEY, payload);
-        return true;
-      }
-      return false;
-    } catch (e) {
-      console.error('[byok] native save failed, falling back to localStorage:', e);
-      // Last-resort fallback to localStorage even on native (so keys aren't lost)
-      if (typeof localStorage !== 'undefined') {
-        localStorage.setItem(WEB_FALLBACK_PREFIX + STORAGE_KEY, payload);
-        return true;
-      }
-      return false;
     }
+
+    // localStorage fallback (web dev or native failure)
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(WEB_FALLBACK_KEY, payload);
+      return true;
+    }
+    return false;
   },
 
   /**
    * Load BYOK config. Returns null if not set.
+   * Never hangs — 5s timeout on native, falls back to localStorage.
    */
   async load(): Promise<ByokConfig | null> {
-    const plugin = await getSecureStorage();
-    try {
-      if (plugin) {
-        const value = await plugin.get(STORAGE_KEY);
-        if (value === null) return null;
-        // plugin.get returns DataType (string | object | number | boolean | Date | ...)
-        const str = typeof value === 'string' ? value : JSON.stringify(value);
-        return JSON.parse(str) as ByokConfig;
+    const plugin = await getPreferences();
+
+    if (plugin) {
+      try {
+        const { value } = await withTimeout(plugin.get({ key: STORAGE_KEY }), 5000, 'Preferences.get');
+        if (value) return JSON.parse(value) as ByokConfig;
+        // Not found in native — check localStorage too (migration from old version)
+      } catch (e) {
+        console.error('[byok] native load failed, trying localStorage:', e);
       }
-    } catch (e) {
-      console.error('[byok] native load failed, trying localStorage:', e);
     }
-    // localStorage fallback (web dev or native failure)
+
+    // localStorage fallback
     if (typeof localStorage !== 'undefined') {
-      const v = localStorage.getItem(WEB_FALLBACK_PREFIX + STORAGE_KEY);
+      const v = localStorage.getItem(WEB_FALLBACK_KEY);
       return v ? JSON.parse(v) : null;
     }
     return null;
   },
 
   /**
-   * Clear BYOK config (used by "Reset all keys" button).
+   * Clear BYOK config.
    */
   async clear(): Promise<void> {
-    const plugin = await getSecureStorage();
-    try {
-      if (plugin) {
-        await plugin.remove(STORAGE_KEY);
+    const plugin = await getPreferences();
+    if (plugin) {
+      try {
+        await withTimeout(plugin.remove({ key: STORAGE_KEY }), 5000, 'Preferences.remove');
         return;
+      } catch (e) {
+        console.error('[byok] native clear failed:', e);
       }
-    } catch (e) {
-      console.error('[byok] native clear failed:', e);
     }
     if (typeof localStorage !== 'undefined') {
-      localStorage.removeItem(WEB_FALLBACK_PREFIX + STORAGE_KEY);
+      localStorage.removeItem(WEB_FALLBACK_KEY);
     }
   },
 
   /**
-   * Check if a config exists (without decrypting).
+   * Check if a config exists.
    */
   async exists(): Promise<boolean> {
-    const plugin = await getSecureStorage();
-    try {
-      if (plugin) {
-        const value = await plugin.get(STORAGE_KEY);
-        return value !== null;
+    const plugin = await getPreferences();
+    if (plugin) {
+      try {
+        const { keys } = await withTimeout(plugin.keys(), 5000, 'Preferences.keys');
+        if (keys.includes(STORAGE_KEY)) return true;
+      } catch (e) {
+        console.error('[byok] exists check failed:', e);
       }
-    } catch (e) {
-      console.error('[byok] exists check failed:', e);
     }
     if (typeof localStorage !== 'undefined') {
-      return localStorage.getItem(WEB_FALLBACK_PREFIX + STORAGE_KEY) !== null;
+      return localStorage.getItem(WEB_FALLBACK_KEY) !== null;
     }
     return false;
   },
