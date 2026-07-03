@@ -17,15 +17,15 @@ export function ChatView() {
   const session = useStore((s) => s.session);
   const scrollRef = React.useRef<HTMLDivElement>(null);
 
-  // Load BYOK config on first mount. Timeout after 5s so we don't get stuck.
+  // Load BYOK config on first mount. Since storage is synchronous now,
+  // this should be instant. Timeout at 2s as safety net.
   React.useEffect(() => {
+    loadByok();
     const timeout = setTimeout(() => {
       if (!useStore.getState().byokLoaded) {
-        console.warn('[chat] loadByok timed out after 5s, forcing byokLoaded=true');
         useStore.setState({ byokLoaded: true });
       }
-    }, 5000);
-    loadByok();
+    }, 2000);
     return () => clearTimeout(timeout);
   }, [loadByok]);
 

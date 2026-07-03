@@ -86,9 +86,9 @@ export const useStore = create<MobileState>((set, get) => ({
   byokLoaded: false,
 
   async loadByok() {
-    const cfg = await secureStorage.load();
+    // Synchronous localStorage — never hangs
+    const cfg = secureStorage.load();
     if (cfg) {
-      // Create the session manager immediately so spawnSession() works.
       const sm = new SessionManager(cfg);
       set({ byok: cfg, byokLoaded: true, sessionManager: sm });
     } else {
@@ -97,14 +97,14 @@ export const useStore = create<MobileState>((set, get) => ({
   },
 
   async saveByok(config) {
-    await secureStorage.save(config);
-    // Re-create the session manager with the new keys.
+    // Synchronous — instant save, no hanging
+    secureStorage.save(config);
     const sm = new SessionManager(config);
     set({ byok: config, sessionManager: sm, byokLoaded: true });
   },
 
   async clearByok() {
-    await secureStorage.clear();
+    secureStorage.clear();
     set({ byok: null, sessionManager: null });
   },
 
