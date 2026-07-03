@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Save, Trash2, ExternalLink, Loader2, CheckCircle2 } from 'lucide-react';
+import { ArrowLeft, Save, Trash2, ExternalLink, Loader2, CheckCircle2, RefreshCw, ChevronDown } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -32,6 +32,9 @@ export default function ByokPage() {
   const [llmBaseUrl, setLlmBaseUrl] = React.useState(byok?.llm.baseUrl ?? '');
   const [sandboxKey, setSandboxKey] = React.useState(byok?.sandbox.apiKey ?? '');
   const [saving, setSaving] = React.useState(false);
+  const [availableModels, setAvailableModels] = React.useState<string[]>([]);
+  const [fetchingModels, setFetchingModels] = React.useState(false);
+  const [showModelDropdown, setShowModelDropdown] = React.useState(false);
 
   // Sync local state when byok loads from storage.
   React.useEffect(() => {
@@ -84,6 +87,68 @@ export default function ByokPage() {
       });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const fetchModels = async () => {
+    const baseUrl = llmProvider === 'custom' ? llmBaseUrl.trim() : llm.baseUrl;
+    if (!baseUrl || !llmKey.trim()) {
+      toast({
+        variant: 'destructive',
+        title: 'Missing info',
+        description: 'Enter your API key' + (llmProvider === 'custom' ? ' and base URL' : '') + ' first.',
+      });
+      return;
+    }
+    setFetchingModels(true);
+    setShowModelDropdown(false);
+    try {
+      // Fetch models from the OpenAI-compatible /models endpoint
+      // In native (APK), use CapacitorHttp (no CORS). In web dev, use the dev proxy.
+      const modelsUrl = `${baseUrl.replace(/\/$/, '')}/models`;
+      let res;
+      if (typeof window !== 'undefined' && (window as any).Capacitor?.isNativePlatform?.()) {
+        const { CapacitorHttp } = await import('@capacitor/core');
+        res = await CapacitorHttp.request({
+          method: 'GET',
+          url: modelsUrl,
+          headers: { Authorization: `Bearer ${llmKey.trim()}`, Accept: 'application/json' },
+          responseType: 'json',
+          connectTimeout: 10_000,
+          readTimeout: 15_000,
+        });
+      } else {
+        // Web dev — use the dev proxy to avoid CORS
+        const proxyUrl = `${process.env.NEXT_PUBLIC_DEV_PROXY ?? 'http://localhost:8787'}/proxy`;
+        const proxyRes = await fetch(proxyUrl, {
+          method: 'GET',
+          headers: { 'X-Target-URL': modelsUrl, Authorization: `Bearer ${llmKey.trim()}` },
+        });
+        res = { status: proxyRes.status, data: JSON.parse(await proxyRes.text()) };
+      }
+      if (res.status >= 400) {
+        throw new Error(`HTTP ${res.status}: ${typeof res.data === 'string' ? res.data : JSON.stringify(res.data).slice(0, 200)}`);
+      }
+      const data = typeof res.data === 'string' ? JSON.parse(res.data) : res.data;
+      const models = (data.data || data.models || []).map((m: any) => m.id || m.name).filter(Boolean).sort();
+      if (models.length === 0) {
+        throw new Error('No models returned');
+      }
+      setAvailableModels(models);
+      toast({
+        variant: 'success',
+        title: 'Models fetched',
+        description: `${models.length} models available. Tap the ▾ to browse.`,
+      });
+    } catch (e) {
+      toast({
+        variant: 'destructive',
+        title: 'Failed to fetch models',
+        description: e instanceof Error ? e.message : String(e),
+      });
+      setAvailableModels([]);
+    } finally {
+      setFetchingModels(false);
     }
   };
 
@@ -171,16 +236,61 @@ export default function ByokPage() {
             </div>
 
             <div>
-              <Label htmlFor="llm-model">Model (optional)</Label>
-              <Input
-                id="llm-model"
-                type="text"
-                value={llmModel}
-                onChange={(e) => setLlmModel(e.target.value)}
-                placeholder={llm.defaultModel}
-                className="mt-1 font-mono text-xs"
-              />
-              <p className="mt-1 text-[11px] text-muted">Default: <code className="font-mono">{llm.defaultModel}</code></p>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="llm-model">Model</Label>
+                <button
+                  type="button"
+                  onClick={() => fetchModels()}
+                  disabled={fetchingModels || !llmKey.trim() || (llmProvider === 'custom' && !llmBaseUrl.trim())}
+                  className="text-[11px] text-accent hover:underline disabled:opacity-50 disabled:no-underline flex items-center gap-1"
+                >
+                  {fetchingModels ? <Loader2 className="h-2.5 w-2.5 animate-spin" /> : <RefreshCw className="h-2.5 w-2.5" />}
+                  Fetch models
+                </button>
+              </div>
+              <div className="relative mt-1">
+                <Input
+                  id="llm-model"
+                  type="text"
+                  value={llmModel}
+                  onChange={(e) => setLlmModel(e.target.value)}
+                  placeholder={llm.defaultModel}
+                  className="font-mono text-xs pr-8"
+                />
+                {availableModels.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowModelDropdown(!showModelDropdown)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-fg"
+                  >
+                    <ChevronDown className="h-3 w-3" />
+                  </button>
+                )}
+                {showModelDropdown && availableModels.length > 0 && (
+                  <div className="absolute z-50 mt-1 w-full max-h-48 overflow-y-auto rounded-md border border-border bg-surface-2 shadow-lg">
+                    {availableModels.map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => {
+                          setLlmModel(m);
+                          setShowModelDropdown(false);
+                        }}
+                        className={`w-full text-left px-2 py-1.5 text-xs font-mono hover:bg-border transition-colors ${
+                          llmModel === m ? 'text-accent bg-accent/10' : 'text-fg'
+                        }`}
+                      >
+                        {m}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {availableModels.length > 0 ? (
+                <p className="mt-1 text-[11px] text-muted">{availableModels.length} models available · tap ▾ to browse</p>
+              ) : (
+                <p className="mt-1 text-[11px] text-muted">Default: <code className="font-mono">{llm.defaultModel}</code> · enter key + base URL, then "Fetch models"</p>
+              )}
             </div>
 
             {llmProvider === 'custom' && (
