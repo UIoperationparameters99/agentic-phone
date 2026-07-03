@@ -284,7 +284,7 @@ export async function createAgent(config: AgentConfig): Promise<AgentRuntime> {
         model: this.config.model,
         messages: openaiMessages,
         tools: tools.length > 0 ? tools : undefined,
-        tool_choice: tools.length > 0 ? 'auto' : undefined,
+        tool_choice: tools.length > 0 ? 'required' : undefined,  // 'required' forces tool use (model gets confused with many tools + 'auto')
         max_tokens: 1000,
         stream: false,
       };
