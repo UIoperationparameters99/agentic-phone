@@ -84,13 +84,15 @@ ${X}:`]}}function nG($){return $==null?void 0:$.tokens.map((J,X)=>({token:J,logp
 
 Your workspace is at: ${$}
 
-You have these tools:
+You have tools available via the function-calling API. Use them by calling the functions directly \u2014 do NOT write tool calls as text. For example, to list files, call the LS function with the path argument; do NOT write "LS("/home/daytona")" as text.
+
+Available tools (use the function-calling API, not text):
 - Bash(command, timeout?) \u2014 run shell commands (persistent session, 600s max timeout)
 - Read(filepath, offset?, limit?) \u2014 read a file (defaults to 2000 lines)
 - Write(filepath, content) \u2014 create or overwrite a file
 - Edit(filepath, old_str, new_str) \u2014 find-and-replace in a file (must be unique)
 - MultiEdit(filepath, edits) \u2014 multiple find-and-replaces in one file
-- Grep(pattern, path?, glob?, output_mode?, -A/-B/-C?, -n?, -i?, multiline?) \u2014 ripgrep search
+- Grep(pattern, path?, glob?, output_mode?) \u2014 ripgrep search
 - Glob(pattern, path?) \u2014 file pattern match
 - LS(path) \u2014 list directory contents
 - TodoWrite(todos) \u2014 update the plan/todo list (one in_progress at a time)
@@ -99,22 +101,19 @@ You have these tools:
 - WebFetch(url, format?, maxLength?) \u2014 fetch a web page and extract text
 - Task(description, prompt, subagent_type, model?) \u2014 launch a typed subagent
 
-Subagent types for Task: Explore (read-only codebase exploration), Plan (design plans), general-purpose (multi-step tasks), frontend-styling-expert (CSS/Tailwind polish), full-stack-developer (full features).
+Subagent types for Task: Explore, Plan, general-purpose, frontend-styling-expert, full-stack-developer.
 
 Rules:
-1. ALWAYS start complex tasks by writing a todo list with TodoWrite.
-2. One todo item is in_progress at a time.
-3. Use Read/Grep/Glob to explore before acting.
-4. Prefer Edit/MultiEdit over Write for existing files.
-5. Save generated artifacts to ${$}/download/
-6. Be concise in your text responses \u2014 show your work via tool calls.
-7. If you need to install a package, use Bash with the appropriate package manager (pip, npm, etc.).
+1. ALWAYS use the function-calling API to invoke tools \u2014 never write tool calls as text.
+2. Start complex tasks by writing a todo list with TodoWrite.
+3. One todo item is in_progress at a time.
+4. Use Read/Grep/Glob to explore before acting.
+5. Prefer Edit/MultiEdit over Write for existing files.
+6. Save generated artifacts to ${$}/download/
+7. Be concise in your text responses \u2014 let tool calls show your work.
 8. The user is on a phone \u2014 keep text responses short and skimmable.
-9. Use WebSearch for current information (news, docs, latest versions).
-10. Use WebFetch to read specific URLs.
-11. Use Task to delegate complex subtasks \u2014 keeps your main context clean.
 
-You are autonomous. The user may disconnect; keep working. When you finish a task, mark all todos as completed and give a brief summary.`}a();import{spawn as $N}from"child_process";var D4=30000;function KW($,J){return{description:"Run a bash command. Persistent session, max 600s timeout. Output is truncated to 30K chars.",parameters:W.object({command:W.string().describe("The bash command to run"),description:W.string().optional().describe("One-line description of what this command does"),timeout:W.number().optional().describe("Timeout in ms (max 600000)"),runIn:W.string().optional().describe("Working directory (default: workspace)")}),execute:async(X)=>{let Q=Math.min(X.timeout??120000,600000),q=X.runIn??J.workspace;try{let Y=await JN(X.command,q,Q);return{stdout:UW(Y.stdout),stderr:UW(Y.stderr),exitCode:Y.exitCode}}catch(Y){return{error:Y instanceof Error?Y.message:String(Y),exitCode:-1}}}}}function JN($,J,X){return new Promise((Q)=>{let q=$N("bash",["-c",$],{cwd:J,env:{...process.env,TERM:"dumb",NO_COLOR:"1"},stdio:["ignore","pipe","pipe"]}),Y="",G="",z=setTimeout(()=>{q.kill("SIGTERM"),setTimeout(()=>q.kill("SIGKILL"),5000)},X);q.stdout.on("data",(H)=>{Y+=H.toString()}),q.stderr.on("data",(H)=>{G+=H.toString()}),q.on("close",(H)=>{clearTimeout(z),Q({stdout:Y,stderr:G,exitCode:H??-1})}),q.on("error",(H)=>{clearTimeout(z),Q({stdout:Y,stderr:G+H.message,exitCode:-1})})})}function UW($){if($.length<=D4)return $;let J=$.slice(0,D4/2),X=$.slice(-D4/2);return`${J}
+You are autonomous. The user may disconnect; keep working. When you finish a task, give a brief summary.`}a();import{spawn as $N}from"child_process";var D4=30000;function KW($,J){return{description:"Run a bash command. Persistent session, max 600s timeout. Output is truncated to 30K chars.",parameters:W.object({command:W.string().describe("The bash command to run"),description:W.string().optional().describe("One-line description of what this command does"),timeout:W.number().optional().describe("Timeout in ms (max 600000)"),runIn:W.string().optional().describe("Working directory (default: workspace)")}),execute:async(X)=>{let Q=Math.min(X.timeout??120000,600000),q=X.runIn??J.workspace;try{let Y=await JN(X.command,q,Q);return{stdout:UW(Y.stdout),stderr:UW(Y.stderr),exitCode:Y.exitCode}}catch(Y){return{error:Y instanceof Error?Y.message:String(Y),exitCode:-1}}}}}function JN($,J,X){return new Promise((Q)=>{let q=$N("bash",["-c",$],{cwd:J,env:{...process.env,TERM:"dumb",NO_COLOR:"1"},stdio:["ignore","pipe","pipe"]}),Y="",G="",z=setTimeout(()=>{q.kill("SIGTERM"),setTimeout(()=>q.kill("SIGKILL"),5000)},X);q.stdout.on("data",(H)=>{Y+=H.toString()}),q.stderr.on("data",(H)=>{G+=H.toString()}),q.on("close",(H)=>{clearTimeout(z),Q({stdout:Y,stderr:G,exitCode:H??-1})}),q.on("error",(H)=>{clearTimeout(z),Q({stdout:Y,stderr:G+H.message,exitCode:-1})})})}function UW($){if($.length<=D4)return $;let J=$.slice(0,D4/2),X=$.slice(-D4/2);return`${J}
 
 ... (truncated ${$.length-D4} chars) ...
 
