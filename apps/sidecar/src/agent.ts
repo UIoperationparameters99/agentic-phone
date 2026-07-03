@@ -256,14 +256,27 @@ export async function createAgent(config: AgentConfig): Promise<AgentRuntime> {
       });
 
       // Build tools in OpenAI format
-      const tools = Object.entries(this.tools).map(([name, tool]: [string, any]) => ({
-        type: 'function',
-        function: {
-          name,
-          description: tool.description,
-          parameters: tool.parameters,
-        },
-      }));
+      // Convert zod schemas to JSON schemas (the SDK uses z.object() internally)
+      const { zodToJsonSchema } = await import('zod-to-json-schema');
+      const tools = Object.entries(this.tools).map(([name, tool]: [string, any]) => {
+        let parameters = tool.parameters;
+        // If it's a zod schema (has _def), convert to JSON schema
+        if (parameters?._def) {
+          try {
+            parameters = zodToJsonSchema(parameters, 'parameters');
+          } catch {
+            parameters = { type: 'object', properties: {} };
+          }
+        }
+        return {
+          type: 'function',
+          function: {
+            name,
+            description: tool.description,
+            parameters,
+          },
+        };
+      });
 
       const requestBody = {
         model: this.config.model,
