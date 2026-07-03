@@ -263,7 +263,9 @@ export async function createAgent(config: AgentConfig): Promise<AgentRuntime> {
         // If it's a zod schema (has _def), convert to JSON schema
         if (parameters?._def) {
           try {
-            parameters = zodToJsonSchema(parameters, 'parameters');
+            // Use $refStripped to inline all $ref definitions (some LLMs don't handle $ref)
+            const converted = zodToJsonSchema(parameters, { name: undefined, $refStrategy: 'none' });
+            parameters = converted;
           } catch {
             parameters = { type: 'object', properties: {} };
           }
